@@ -59,6 +59,7 @@ dependencies {
     // Compose animation and icons required for Material3 expressive UI
     implementation(libs.androidx.compose.animation)
     implementation(libs.androidx.compose.material.icons.extended)
+    implementation("androidx.preference:preference-ktx:1.2.1")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

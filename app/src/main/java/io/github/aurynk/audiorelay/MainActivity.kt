@@ -29,6 +29,9 @@ import androidx.compose.material.icons.rounded.LinkOff
 import androidx.compose.material.icons.rounded.PowerSettingsNew
 import androidx.compose.material.icons.rounded.HeadsetOff
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Settings
+import android.content.SharedPreferences
+import androidx.preference.PreferenceManager
 import androidx.core.content.ContextCompat
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -72,10 +75,17 @@ class MainActivity : ComponentActivity() {
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Ensure the notification channel exists and start the foreground service.
+        // Ensure the notification channel exists
         createNotificationChannel()
-        val intent = Intent(this, AudioRelayService::class.java)
-        ContextCompat.startForegroundService(this, intent)
+        
+        // Check if auto-start is enabled in preferences
+        val prefs = PreferenceManager.getDefaultSharedPreferences(this)
+        val autoStart = prefs.getBoolean("auto_start_service", false)
+        
+        if (autoStart) {
+            val intent = Intent(this, AudioRelayService::class.java)
+            ContextCompat.startForegroundService(this, intent)
+        }
         
         // Register broadcast receiver with proper flags for all Android versions
         val filter = IntentFilter().apply {
@@ -161,12 +171,19 @@ fun AurynkReceiverApp(
 ) {
     val deviceIp = remember { getDeviceIpAddress(context) }
     val port = "5000" // Fixed port matching the service
+    
+    // Get preferences
+    val prefs = remember { PreferenceManager.getDefaultSharedPreferences(context) }
+    val autoStart = prefs.getBoolean("auto_start_service", false)
+    val showVisualizer = prefs.getBoolean("show_visualizer", true)
+    val showVolumeSlider = prefs.getBoolean("show_volume_slider", true)
 
     // --- STATE ---
-    var isServiceRunning by remember { mutableStateOf(true) } // Service auto-starts on app launch
+    var isServiceRunning by remember { mutableStateOf(autoStart) } // Service state based on preference
     var volume by remember { mutableFloatStateOf(0.8f) }
     var isMuted by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showSettingsDialog by remember { mutableStateOf(false) }
 
     // Dynamic colors based on connection state
     val statusColor by animateColorAsState(
@@ -177,7 +194,7 @@ fun AurynkReceiverApp(
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("Aurynk Receiver", fontWeight = FontWeight.Bold) },
+                title = { Text("Aurynk", fontWeight = FontWeight.Bold) },
                 actions = {
                     IconButton(onClick = { showAboutDialog = true }) {
                         Icon(
@@ -245,7 +262,7 @@ fun AurynkReceiverApp(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = if (isClientConnected) "Connected: $clientIp:$port" else "Ready to receive on $deviceIp:$port",
+                    text = if (isClientConnected) "Connected: $clientIp:$port" else "Press Start to begin playing",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -259,7 +276,7 @@ fun AurynkReceiverApp(
                     .padding(vertical = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
-                androidx.compose.animation.AnimatedVisibility(visible = isClientConnected) {
+                androidx.compose.animation.AnimatedVisibility(visible = isClientConnected && showVisualizer) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.fillMaxWidth()
@@ -267,31 +284,33 @@ fun AurynkReceiverApp(
                         // Real Audio Visualizer
                         RealAudioVisualizer(audioLevels = audioLevels)
                         Spacer(Modifier.height(32.dp))
-                        // Volume Slider
-                        Text(
-                            "Local Volume",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Slider(
-                            value = volume,
-                            onValueChange = { newVolume ->
-                                volume = newVolume
-                                isMuted = false // Unmute when user adjusts volume
-                                // Send volume change to service
-                                val volumeIntent = Intent(context, AudioRelayService::class.java).apply {
-                                    action = AudioRelayService.ACTION_SET_VOLUME
-                                    putExtra(AudioRelayService.EXTRA_VOLUME, newVolume)
-                                }
-                                context.startService(volumeIntent)
-                            },
-                            modifier = Modifier.fillMaxWidth(0.85f)
-                        )
+                        // Volume Slider - conditionally shown
+                        if (showVolumeSlider) {
+                            Text(
+                                "Local Volume",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Slider(
+                                value = volume,
+                                onValueChange = { newVolume ->
+                                    volume = newVolume
+                                    isMuted = false // Unmute when user adjusts volume
+                                    // Send volume change to service
+                                    val volumeIntent = Intent(context, AudioRelayService::class.java).apply {
+                                        action = AudioRelayService.ACTION_SET_VOLUME
+                                        putExtra(AudioRelayService.EXTRA_VOLUME, newVolume)
+                                    }
+                                    context.startService(volumeIntent)
+                                },
+                                modifier = Modifier.fillMaxWidth(0.85f)
+                            )
+                        }
                     }
                 }
 
-                androidx.compose.animation.AnimatedVisibility(visible = !isClientConnected) {
+                androidx.compose.animation.AnimatedVisibility(visible = !isClientConnected && isServiceRunning) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
@@ -403,7 +422,7 @@ fun AurynkReceiverApp(
                 )
                 Spacer(Modifier.width(12.dp))
                 Text(
-                    text = if (isServiceRunning) "Stop Service" else "Start Service",
+                    text = if (isServiceRunning) "Stop" else "Start",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -417,7 +436,7 @@ fun AurynkReceiverApp(
             onDismissRequest = { showAboutDialog = false },
             title = {
                 Text(
-                    text = "About Aurynk Receiver",
+                    text = "About Aurynk",
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -477,8 +496,136 @@ fun AurynkReceiverApp(
                 }
             },
             confirmButton = {
+                TextButton(onClick = { showSettingsDialog = true; showAboutDialog = false }) {
+                    Text("Settings")
+                }
+            },
+            dismissButton = {
                 TextButton(onClick = { showAboutDialog = false }) {
                     Text("Close")
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(20.dp)
+        )
+    }
+    
+    // Settings Dialog
+    if (showSettingsDialog) {
+        var tempAutoStart by remember { mutableStateOf(prefs.getBoolean("auto_start_service", false)) }
+        var tempShowVisualizer by remember { mutableStateOf(prefs.getBoolean("show_visualizer", true)) }
+        var tempShowVolumeSlider by remember { mutableStateOf(prefs.getBoolean("show_volume_slider", true)) }
+        
+        AlertDialog(
+            onDismissRequest = { showSettingsDialog = false },
+            title = {
+                Text(
+                    text = "Settings",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Auto-start service setting
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Auto-start Service",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Start service automatically on app launch",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = tempAutoStart,
+                            onCheckedChange = { tempAutoStart = it }
+                        )
+                    }
+                    
+                    HorizontalDivider()
+                    
+                    // Show volume slider setting
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Show Volume Slider",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Display volume control slider",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = tempShowVolumeSlider,
+                            onCheckedChange = { tempShowVolumeSlider = it }
+                        )
+                    }
+                    
+                    HorizontalDivider()
+                    
+                    // Show visualizer setting
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Show Audio Visualizer",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Display real-time audio waveform",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = tempShowVisualizer,
+                            onCheckedChange = { tempShowVisualizer = it }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        // Save settings
+                        prefs.edit().apply {
+                            putBoolean("auto_start_service", tempAutoStart)
+                            putBoolean("show_volume_slider", tempShowVolumeSlider)
+                            putBoolean("show_visualizer", tempShowVisualizer)
+                            apply()
+                        }
+                        showSettingsDialog = false
+                    }
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSettingsDialog = false }) {
+                    Text("Cancel")
                 }
             },
             containerColor = MaterialTheme.colorScheme.surface,
