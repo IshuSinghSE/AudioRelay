@@ -12,6 +12,8 @@ import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
@@ -509,17 +511,24 @@ fun AurynkApp(
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(horizontal = 20.dp, vertical = 16.dp)
                     ) {
                         Card(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .wrapContentHeight(),
                             colors = CardDefaults.cardColors(
                                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
                             ),
                             shape = RoundedCornerShape(20.dp)
                         ) {
                             Column(
-                                modifier = Modifier.padding(24.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(20.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
                                 if (!isBroadcastMode) {
@@ -529,14 +538,23 @@ fun AurynkApp(
                                         fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
-                                    Spacer(Modifier.height(24.dp))
+                                    
+                                    Spacer(Modifier.height(16.dp))
+                                    
+                                    Divider(
+                                        modifier = Modifier.fillMaxWidth(0.3f),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                                    )
+                                    
+                                    Spacer(Modifier.height(20.dp))
 
                                     Text(
                                         "Device IP Address",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        letterSpacing = 0.5.sp
                                     )
-                                    Spacer(Modifier.height(8.dp))
+                                    Spacer(Modifier.height(6.dp))
                                     Text(
                                         deviceIp,
                                         style = MaterialTheme.typography.headlineMedium,
@@ -549,9 +567,10 @@ fun AurynkApp(
                                     Text(
                                         "Port",
                                         style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        letterSpacing = 0.5.sp
                                     )
-                                    Spacer(Modifier.height(8.dp))
+                                    Spacer(Modifier.height(6.dp))
                                     Text(
                                         port,
                                         style = MaterialTheme.typography.headlineMedium,
@@ -560,11 +579,20 @@ fun AurynkApp(
                                     )
 
                                     Spacer(Modifier.height(20.dp))
+                                    
+                                    Divider(
+                                        modifier = Modifier.fillMaxWidth(0.3f),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                                    )
+                                    
+                                    Spacer(Modifier.height(14.dp))
 
                                     Text(
-                                        if (isBroadcastMode) "Connect from another device to hear audio" else "Use these details in your PC app to connect",
+                                        if (isBroadcastMode) "Connect from another device to hear audio" else "Use these details to connect",
                                         style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 12.dp),
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
                                     )
                                 } else {
                                     // Broadcast mode: show nearby discovered devices
@@ -626,18 +654,38 @@ fun AurynkApp(
                                         fontWeight = FontWeight.SemiBold,
                                         color = MaterialTheme.colorScheme.onSurface
                                     )
-                                    Spacer(Modifier.height(12.dp))
+                                    
+                                    Spacer(Modifier.height(16.dp))
+                                    
+                                    Divider(
+                                        modifier = Modifier.fillMaxWidth(0.3f),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                                    )
+                                    
+                                    Spacer(Modifier.height(16.dp))
 
                                     if (isDiscovering) {
                                         CircularProgressIndicator(modifier = Modifier.size(36.dp))
                                         Spacer(Modifier.height(12.dp))
-                                        Text("Searching on local network...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text(
+                                            "Searching on local network...",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
                                     } else {
                                         if (discoveredDevices.isEmpty()) {
-                                            Text("No nearby receivers found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            Spacer(Modifier.height(8.dp))
-                                            Row {
-                                                Button(onClick = { doDiscovery() }) { Text("Refresh") }
+                                            Text(
+                                                "No nearby receivers found.",
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                            )
+                                            Spacer(Modifier.height(12.dp))
+                                            Button(
+                                                onClick = { doDiscovery() },
+                                                modifier = Modifier.fillMaxWidth(0.6f)
+                                            ) {
+                                                Text("Refresh")
                                             }
                                         } else {
                                             Column(modifier = Modifier.fillMaxWidth()) {
@@ -646,37 +694,56 @@ fun AurynkApp(
                                                     Row(
                                                         modifier = Modifier
                                                             .fillMaxWidth()
-                                                            .padding(8.dp)
+                                                            .padding(vertical = 10.dp, horizontal = 6.dp)
                                                             .clickable {
                                                                 onClientIpSelected(ip)
                                                                 Toast.makeText(context, "Selected $name ($ip:$p)", Toast.LENGTH_SHORT).show()
                                                             },
-                                                        verticalAlignment = Alignment.CenterVertically
+                                                        verticalAlignment = Alignment.CenterVertically,
+                                                        horizontalArrangement = Arrangement.SpaceBetween
                                                     ) {
                                                         Column(modifier = Modifier.weight(1f)) {
-                                                            Text(name, fontWeight = FontWeight.SemiBold)
-                                                            Text("$ip:$p", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                            Text(
+                                                                name,
+                                                                fontWeight = FontWeight.SemiBold,
+                                                                style = MaterialTheme.typography.bodyLarge
+                                                            )
+                                                            Spacer(Modifier.height(3.dp))
+                                                            Text(
+                                                                "$ip:$p",
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                            )
                                                         }
+                                                        Spacer(Modifier.width(8.dp))
                                                         if (clientIp == ip) {
-                                                                Spacer(Modifier.height(6.dp))
-                                                                OutlinedButton(onClick = {
-                                                                    // clear selection; Activity callback will send disconnect to previous
+                                                            OutlinedButton(
+                                                                onClick = {
                                                                     onClientIpSelected("")
                                                                     Toast.makeText(context, "Disconnected from $name", Toast.LENGTH_SHORT).show()
-                                                                }) {
-                                                                    Text("Disconnect")
-                                                                }
-                                                            
+                                                                },
+                                                                modifier = Modifier.wrapContentWidth()
+                                                            ) {
+                                                                Text("Disconnect", style = MaterialTheme.typography.labelMedium)
+                                                            }
                                                         } else {
-                                                            Button(onClick = {
-                                                                onClientIpSelected(ip)
-                                                                Toast.makeText(context, "Connected to $name ($ip:$p)", Toast.LENGTH_SHORT).show()
-                                                            }) {
-                                                                Text("Connect")
+                                                            Button(
+                                                                onClick = {
+                                                                    onClientIpSelected(ip)
+                                                                    Toast.makeText(context, "Connected to $name ($ip:$p)", Toast.LENGTH_SHORT).show()
+                                                                },
+                                                                modifier = Modifier.wrapContentWidth()
+                                                            ) {
+                                                                Text("Connect", style = MaterialTheme.typography.labelMedium)
                                                             }
                                                         }
                                                     }
-                                                    Divider()
+                                                    if (idx < discoveredDevices.size - 1) {
+                                                        Divider(
+                                                            modifier = Modifier.padding(horizontal = 6.dp),
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
+                                                        )
+                                                    }
                                                 }
                                             }
                                         }
