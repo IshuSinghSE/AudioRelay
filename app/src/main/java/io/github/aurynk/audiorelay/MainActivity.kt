@@ -92,9 +92,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         
-        // Make navigation bar transparent
+        // Make status bar and navigation bar transparent
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        }
         
         // Ensure the notification channel exists
         createNotificationChannel()
@@ -297,9 +303,17 @@ fun AurynkApp(
         contract = ActivityResultContracts.StartActivityForResult()
     ) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
+            // Check if a receiver is selected
+            if (clientIp.isEmpty()) {
+                Toast.makeText(context, "Please select a receiver device first", Toast.LENGTH_LONG).show()
+                return@rememberLauncherForActivityResult
+            }
+            
             val intent = Intent(context, AudioCaptureService::class.java).apply {
                 action = AudioCaptureService.ACTION_START
                 putExtra(AudioCaptureService.EXTRA_RESULT_DATA, result.data)
+                putExtra(AudioCaptureService.EXTRA_TARGET_IP, clientIp)
+                putExtra(AudioCaptureService.EXTRA_TARGET_PORT, 5000)
             }
             ContextCompat.startForegroundService(context, intent)
             isServiceRunning = true
@@ -507,7 +521,7 @@ fun AurynkApp(
                     }
                 }
 
-                androidx.compose.animation.AnimatedVisibility(visible = (!isClientConnected && !isBroadcastMode && isServiceRunning) || (isBroadcastMode && isServiceRunning)) {
+                androidx.compose.animation.AnimatedVisibility(visible = (!isClientConnected && !isBroadcastMode && isServiceRunning) || isBroadcastMode) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
@@ -541,7 +555,7 @@ fun AurynkApp(
                                     
                                     Spacer(Modifier.height(16.dp))
                                     
-                                    Divider(
+                                    HorizontalDivider(
                                         modifier = Modifier.fillMaxWidth(0.3f),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                                     )
@@ -580,7 +594,7 @@ fun AurynkApp(
 
                                     Spacer(Modifier.height(20.dp))
                                     
-                                    Divider(
+                                    HorizontalDivider(
                                         modifier = Modifier.fillMaxWidth(0.3f),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                                     )
@@ -627,8 +641,11 @@ fun AurynkApp(
                                                                 val respPort = parts.getOrNull(1)?.toIntOrNull() ?: 5000
                                                                 val name = parts.getOrNull(2) ?: "Aurynk"
                                                                 val ip = resp.address.hostAddress ?: ""
-                                                                val triple = Triple(ip, respPort, name)
-                                                                if (!discoveredDevices.contains(triple)) discoveredDevices.add(triple)
+                                                                // Filter out self device IP
+                                                                if (ip != deviceIp) {
+                                                                    val triple = Triple(ip, respPort, name)
+                                                                    if (!discoveredDevices.contains(triple)) discoveredDevices.add(triple)
+                                                                }
                                                             }
                                                         } catch (e: Exception) {
                                                             // ignore
@@ -644,8 +661,8 @@ fun AurynkApp(
                                         }
                                     }
 
-                                    LaunchedEffect(isBroadcastMode, isServiceRunning) {
-                                        if (isBroadcastMode && isServiceRunning) doDiscovery()
+                                    LaunchedEffect(isBroadcastMode) {
+                                        if (isBroadcastMode) doDiscovery()
                                     }
 
                                     Text(
@@ -657,7 +674,7 @@ fun AurynkApp(
                                     
                                     Spacer(Modifier.height(16.dp))
                                     
-                                    Divider(
+                                    HorizontalDivider(
                                         modifier = Modifier.fillMaxWidth(0.3f),
                                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
                                     )
@@ -739,7 +756,7 @@ fun AurynkApp(
                                                         }
                                                     }
                                                     if (idx < discoveredDevices.size - 1) {
-                                                        Divider(
+                                                        HorizontalDivider(
                                                             modifier = Modifier.padding(horizontal = 6.dp),
                                                             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f)
                                                         )
@@ -772,6 +789,10 @@ fun AurynkApp(
                         // STOP
                         isServiceRunning = false
                         if (isBroadcastMode) {
+                             // Send disconnect to currently connected receiver
+                             if (clientIp.isNotEmpty()) {
+                                 onClientIpSelected("")
+                             }
                              val intent = Intent(context, AudioCaptureService::class.java)
                              intent.action = AudioCaptureService.ACTION_STOP
                              context.startService(intent)
@@ -782,6 +803,11 @@ fun AurynkApp(
                     } else {
                         // START
                         if (isBroadcastMode) {
+                            // Check if receiver is selected first
+                            if (clientIp.isEmpty()) {
+                                Toast.makeText(context, "Please select a receiver device first", Toast.LENGTH_LONG).show()
+                                return@Button
+                            }
                             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                                 recordAudioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
                             } else {
@@ -794,6 +820,7 @@ fun AurynkApp(
                         }
                     }
                 },
+                enabled = !isBroadcastMode || isServiceRunning || clientIp.isNotEmpty(),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(64.dp)

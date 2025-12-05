@@ -31,16 +31,17 @@ class AudioCaptureService : Service() {
     private val serviceScope = CoroutineScope(Dispatchers.IO + serviceJob)
     private var mediaProjection: MediaProjection? = null
     private var audioRecord: AudioRecord? = null
-    private var serverSocket: ServerSocket? = null
+    private var clientSocket: Socket? = null
+    private var targetIp: String = ""
+    private var targetPort: Int = 5000
     private var isStreaming = false
-
-    // Store connected client output streams safely
-    private val clientOutputStreams = CopyOnWriteArrayList<OutputStream>()
 
     companion object {
         const val ACTION_START = "ACTION_START"
         const val ACTION_STOP = "ACTION_STOP"
         const val EXTRA_RESULT_DATA = "EXTRA_RESULT_DATA"
+        const val EXTRA_TARGET_IP = "EXTRA_TARGET_IP"
+        const val EXTRA_TARGET_PORT = "EXTRA_TARGET_PORT"
         const val NOTIFICATION_ID = 1002
         const val CHANNEL_ID = "AudioCaptureChannel"
         const val TAG = "AudioCaptureService"
@@ -62,8 +63,11 @@ class AudioCaptureService : Service() {
                     @Suppress("DEPRECATION")
                     intent.getParcelableExtra(EXTRA_RESULT_DATA)
                 }
+                
+                targetIp = intent.getStringExtra(EXTRA_TARGET_IP) ?: ""
+                targetPort = intent.getIntExtra(EXTRA_TARGET_PORT, 5000)
 
-                if (resultData != null) {
+                if (resultData != null && targetIp.isNotEmpty()) {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         ServiceCompat.startForeground(
                             this,
@@ -85,6 +89,9 @@ class AudioCaptureService : Service() {
                          Log.e(TAG, "MediaProjection is null")
                          stopSelf()
                     }
+                } else {
+                    Log.e(TAG, "Missing result data or target IP")
+                    stopSelf()
                 }
             }
             ACTION_STOP -> {
@@ -105,7 +112,7 @@ class AudioCaptureService : Service() {
 
             val audioFormat = AudioFormat.Builder()
                 .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                .setSampleRate(48000)
+                .setSampleRate(44100)  // Match receiver's sample rate
                 .setChannelMask(AudioFormat.CHANNEL_IN_STEREO)
                 .build()
 
@@ -118,8 +125,8 @@ class AudioCaptureService : Service() {
                 audioRecord?.startRecording()
                 isStreaming = true
 
-                startStreamingServer()
-                startAudioBroadcaster() // Start the dedicated broadcasting coroutine
+                // Connect and stream in a single coroutine to ensure proper sequencing
+                connectAndStream()
 
             } catch (e: SecurityException) {
                 Log.e(TAG, "Security Exception starting AudioRecord: ${e.message}")
@@ -138,73 +145,75 @@ class AudioCaptureService : Service() {
         }
     }
 
-    private fun startStreamingServer() {
+    private fun connectAndStream() {
         serviceScope.launch {
             try {
-                serverSocket = ServerSocket(5000)
-                Log.d(TAG, "Server started on port 5000")
-
-                while (isActive && isStreaming) {
-                    try {
-                        val client = serverSocket?.accept()
-                        Log.d(TAG, "Client connected: ${client?.inetAddress}")
-                        client?.let {
-                             val outputStream = it.getOutputStream()
-                             clientOutputStreams.add(outputStream)
-                             // We don't block here reading/writing, just add to list
-                             // We might need to handle client disconnection individually?
-                             // But for simple broadcasting, let the broadcaster handle write errors
+                // First, establish connection
+                Log.d(TAG, "Connecting to receiver at $targetIp:$targetPort")
+                clientSocket = Socket(targetIp, targetPort)
+                clientSocket?.tcpNoDelay = true // Disable Nagle's algorithm for low latency
+                Log.d(TAG, "Connected to receiver successfully")
+                
+                // Then start streaming
+                val bufferSize = 1024 * 4
+                val buffer = ByteArray(bufferSize)
+                val outputStream = clientSocket?.getOutputStream()
+                
+                if (outputStream == null) {
+                    Log.e(TAG, "Output stream is null")
+                    stopSelf()
+                    return@launch
+                }
+                
+                Log.d(TAG, "Starting audio streaming...")
+                var bytesWritten = 0L
+                var lastLogTime = System.currentTimeMillis()
+                
+                while (isActive && isStreaming && clientSocket?.isConnected == true) {
+                    val read = audioRecord?.read(buffer, 0, bufferSize) ?: 0
+                    if (read > 0) {
+                        try {
+                            outputStream.write(buffer, 0, read)
+                            outputStream.flush()
+                            bytesWritten += read
+                            
+                            // Log progress every 5 seconds
+                            val now = System.currentTimeMillis()
+                            if (now - lastLogTime > 5000) {
+                                Log.d(TAG, "Streamed ${bytesWritten / 1024} KB so far")
+                                lastLogTime = now
+                            }
+                        } catch (e: IOException) {
+                            Log.e(TAG, "Error writing to receiver: ${e.message}")
+                            break
                         }
-                    } catch (e: IOException) {
-                        if (isStreaming) Log.e(TAG, "Error accepting client: ${e.message}")
+                    } else if (read < 0) {
+                        Log.e(TAG, "AudioRecord read error: $read")
+                        break
                     }
                 }
+                
+                Log.d(TAG, "Audio streaming stopped. Total bytes: $bytesWritten")
+                
             } catch (e: IOException) {
-                Log.e(TAG, "Error starting server: ${e.message}")
+                Log.e(TAG, "Connection/streaming failed: ${e.message}", e)
+                stopSelf()
+            } catch (e: Exception) {
+                Log.e(TAG, "Unexpected error: ${e.message}", e)
+                stopSelf()
             }
-        }
-    }
-
-    private fun startAudioBroadcaster() {
-        serviceScope.launch {
-             val bufferSize = 1024 * 4
-             val buffer = ByteArray(bufferSize)
-
-             while (isActive && isStreaming) {
-                 val read = audioRecord?.read(buffer, 0, bufferSize) ?: 0
-                 if (read > 0) {
-                     // Iterate over all connected clients and write the same buffer
-                     val iter = clientOutputStreams.iterator()
-                     while (iter.hasNext()) {
-                         val stream = iter.next()
-                         try {
-                             stream.write(buffer, 0, read)
-                         } catch (e: IOException) {
-                             Log.e(TAG, "Client disconnected or write error, removing client")
-                             clientOutputStreams.remove(stream)
-                             try {
-                                 stream.close()
-                             } catch (ex: Exception) { /* ignore */ }
-                         }
-                     }
-                 }
-             }
         }
     }
 
     override fun onDestroy() {
         isStreaming = false
         serviceJob.cancel()
+        
         try {
-            serverSocket?.close()
+            clientSocket?.close()
         } catch (e: IOException) {
             e.printStackTrace()
         }
-
-        clientOutputStreams.forEach {
-            try { it.close() } catch(e: Exception) {}
-        }
-        clientOutputStreams.clear()
 
         audioRecord?.stop()
         audioRecord?.release()
