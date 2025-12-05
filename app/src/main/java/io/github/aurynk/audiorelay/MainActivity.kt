@@ -389,6 +389,7 @@ fun AurynkApp(
                          if (isMuted) "Muted" else "Streaming Audio"
                     } else if (isServiceRunning) "Waiting for Connection" else "Service Stopped"
                 }
+                Spacer(modifier = Modifier.height(10.dp))
 
                 Text(
                     text = statusText,

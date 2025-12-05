@@ -42,6 +42,12 @@ class AudioRelayService : Service() {
         const val EXTRA_AUDIO_LEVELS = "audio_levels"
         const val ACTION_STOP_SERVICE = "io.github.aurynk.STOP_SERVICE"
         const val ACTION_OPEN_APP = "io.github.aurynk.OPEN_APP"
+
+        // Discovery constants — desktop client will broadcast DISCOVERY_REQUEST
+        // and the service will reply with DISCOVERY_RESPONSE;<port>;<name>
+        const val DISCOVERY_PORT = 5002
+        const val DISCOVERY_REQUEST = "AURYNK_DISCOVER"
+        const val DISCOVERY_RESPONSE = "AURYNK_RESPONSE"
     }
 
     override fun onCreate() {
@@ -50,7 +56,45 @@ class AudioRelayService : Service() {
         notificationManager = NotificationManagerCompat.from(this)
         createNotificationChannel()
         startForeground(1, buildNotification())
+        // Start discovery responder so desktop clients can find this device
+        startDiscoveryResponder()
         Log.i("AudioRelay", "Service onCreate called, foreground started.")
+    }
+
+    private var discoveryThread: Thread? = null
+
+    private fun startDiscoveryResponder() {
+        if (discoveryThread != null && discoveryThread!!.isAlive) return
+        discoveryThread = Thread {
+            var socket: DatagramSocket? = null
+            try {
+                socket = DatagramSocket(DISCOVERY_PORT)
+                socket.broadcast = true
+                val buf = ByteArray(1024)
+                while (!Thread.currentThread().isInterrupted) {
+                    val packet = DatagramPacket(buf, buf.size)
+                    try {
+                        socket.receive(packet)
+                        val msg = String(packet.data, 0, packet.length).trim()
+                        if (msg == DISCOVERY_REQUEST) {
+                            // Respond with service info — desktop will use packet source address
+                            val response = "$DISCOVERY_RESPONSE;5000;Aurynk"
+                            val respData = response.toByteArray()
+                            val respPacket = DatagramPacket(respData, respData.size, packet.address, packet.port)
+                            socket.send(respPacket)
+                            Log.d("AudioRelay", "Discovery request responded to ${packet.address}")
+                        }
+                    } catch (e: Exception) {
+                        // ignore and continue
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("AudioRelay", "Discovery responder failed: ${e.message}")
+            } finally {
+                try { socket?.close() } catch (e: Exception) {}
+            }
+        }
+        discoveryThread?.start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -316,6 +360,12 @@ class AudioRelayService : Service() {
             Log.e("AudioRelay", "Error closing server socket on destroy.", e)
         }
         serverThread?.interrupt() // Interrupt the thread
+        try {
+            discoveryThread?.interrupt()
+            discoveryThread = null
+        } catch (e: Exception) {
+            // ignore
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

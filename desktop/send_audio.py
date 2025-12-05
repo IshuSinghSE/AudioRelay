@@ -2,7 +2,9 @@ import logging
 import socket
 import ssl
 import subprocess
-from typing import Optional
+import select
+import time
+from typing import Optional, List, Tuple
 
 
 def create_ssl_context(
@@ -151,8 +153,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Stream desktop audio to Android device over TCP or TLS."
     )
-    parser.add_argument("host", help="Destination host (IP or DNS)")
-    parser.add_argument("port", type=int, help="Destination port")
+    parser.add_argument("host", help="Destination host (IP or DNS) or use 'discover' with --discover")
+    parser.add_argument("port", type=int, nargs="?", help="Destination port")
+    parser.add_argument("--discover", action="store_true", help="Discover receiver devices on the local network and select one interactively")
     # Allow passing the capture device either as an optional flag or as
     # an optional positional argument so both styles work:
     parser.add_argument("--device", help="PulseAudio/PipeWire source device name")
@@ -177,6 +180,37 @@ def main():
     # Prefer explicit --device; fall back to positional device if provided.
     device_arg = args.device if getattr(args, "device", None) else getattr(args, "device_pos", None)
 
+    if args.discover:
+        # Perform network discovery to find available receivers
+        devices = discover_receivers(timeout=3)
+        if not devices:
+            print("No receivers found via discovery. Try providing host manually.")
+            return
+        print("Discovered receivers:")
+        for i, (addr, port, name) in enumerate(devices):
+            print(f"[{i}] {name} - {addr}:{port}")
+        choice = 0
+        try:
+            choice_input = input("Select device index (default 0): ")
+            if choice_input.strip() != "":
+                choice = int(choice_input.strip())
+        except Exception:
+            choice = 0
+        host, port, _ = devices[choice]
+        if args.tls:
+            stream_desktop_audio_tls(
+                host,
+                port,
+                device_arg,
+                args.certfile,
+                args.keyfile,
+                args.cafile,
+                verify=not args.no_verify,
+            )
+        else:
+            stream_desktop_audio(host, port, device_arg)
+        return
+
     if args.tls:
         stream_desktop_audio_tls(
             args.host,
@@ -189,6 +223,55 @@ def main():
         )
     else:
         stream_desktop_audio(args.host, args.port, device_arg)
+
+
+def discover_receivers(timeout: int = 3, discovery_port: int = 5002) -> List[Tuple[str, int, str]]:
+    """
+    Broadcast a discovery packet and collect responses for `timeout` seconds.
+    Returns a list of (ip, port, name).
+    """
+    msg = b"AURYNK_DISCOVER"
+    responses: List[Tuple[str, int, str]] = []
+    # Create UDP socket for broadcast
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        sock.settimeout(0.5)
+        try:
+            # Send to global broadcast
+            sock.sendto(msg, ("255.255.255.255", discovery_port))
+        except Exception:
+            pass
+        # Also try subnet-directed broadcast on common local addresses
+        try:
+            sock.sendto(msg, ("<broadcast>", discovery_port))
+        except Exception:
+            pass
+
+        # Listen for replies for `timeout` seconds
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                ready = select.select([sock], [], [], max(0, end - time.time()))
+                if ready[0]:
+                    data, addr = sock.recvfrom(1024)
+                    text = data.decode(errors="ignore").strip()
+                    # Expect format: AURYNK_RESPONSE;5000;Aurynk
+                    if text.startswith("AURYNK_RESPONSE"):
+                        parts = text.split(";")
+                        if len(parts) >= 3:
+                            try:
+                                resp_port = int(parts[1])
+                            except Exception:
+                                resp_port = 5000
+                            name = parts[2]
+                            ip = addr[0]
+                            if (ip, resp_port, name) not in responses:
+                                responses.append((ip, resp_port, name))
+            except socket.timeout:
+                continue
+            except Exception:
+                continue
+    return responses
 
 
 def stream_desktop_audio(host, port, device=None):
