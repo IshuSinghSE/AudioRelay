@@ -45,6 +45,12 @@ import android.content.Context
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import android.util.Log
+import java.net.DatagramPacket
+import java.net.DatagramSocket
+import java.net.InetAddress
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.getValue
@@ -159,11 +165,58 @@ class MainActivity : ComponentActivity() {
                         context = this,
                         isClientConnected = connectionState,
                         clientIp = clientIpState,
-                        audioLevels = audioLevels
+                        audioLevels = audioLevels,
+                        onClientIpSelected = { ip ->
+                            val previous = clientIpState
+                            clientIpState = ip
+                            if (ip.isNotEmpty()) {
+                                sendConnectRequest(ip)
+                            } else {
+                                // clearing selection -> send disconnect to previous if existed
+                                if (previous.isNotEmpty()) {
+                                    sendDisconnectRequest(previous)
+                                }
+                            }
+                        }
                     )
                 }
             }
         }
+    }
+
+    // Send a small UDP connect notification to the selected receiver so it can update its UI
+    private fun sendConnectRequest(targetIp: String) {
+        Thread {
+            var sock: DatagramSocket? = null
+            try {
+                sock = DatagramSocket()
+                val msg = AudioRelayService.CONNECT_REQUEST.toByteArray()
+                val packet = DatagramPacket(msg, msg.size, InetAddress.getByName(targetIp), AudioRelayService.DISCOVERY_PORT)
+                sock.send(packet)
+                Log.d("MainActivity", "Sent CONNECT to $targetIp")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to send connect request: ${e.message}")
+            } finally {
+                try { sock?.close() } catch (e: Exception) {}
+            }
+        }.start()
+    }
+
+    private fun sendDisconnectRequest(targetIp: String) {
+        Thread {
+            var sock: DatagramSocket? = null
+            try {
+                sock = DatagramSocket()
+                val msg = AudioRelayService.DISCONNECT_REQUEST.toByteArray()
+                val packet = DatagramPacket(msg, msg.size, InetAddress.getByName(targetIp), AudioRelayService.DISCOVERY_PORT)
+                sock.send(packet)
+                Log.d("MainActivity", "Sent DISCONNECT to $targetIp")
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to send disconnect request: ${e.message}")
+            } finally {
+                try { sock?.close() } catch (e: Exception) {}
+            }
+        }.start()
     }
     
     override fun onDestroy() {
@@ -215,7 +268,8 @@ fun AurynkApp(
     context: Context,
     isClientConnected: Boolean,
     clientIp: String,
-    audioLevels: FloatArray = FloatArray(24) { 0f }
+    audioLevels: FloatArray = FloatArray(24) { 0f },
+    onClientIpSelected: (String) -> Unit
 ) {
     val deviceIp = remember { getDeviceIpAddress(context) }
     val port = "5000" // Fixed port matching the service
@@ -465,52 +519,169 @@ fun AurynkApp(
                             shape = RoundedCornerShape(20.dp)
                         ) {
                             Column(
-                                modifier = Modifier.padding(44.dp),
+                                modifier = Modifier.padding(24.dp),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
-                                Text(
-                                    "Connection Details",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Spacer(Modifier.height(24.dp))
+                                if (!isBroadcastMode) {
+                                    Text(
+                                        "Connection Details",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(Modifier.height(24.dp))
 
-                                Text(
-                                    "Device IP Address",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    deviceIp,
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                                    Text(
+                                        "Device IP Address",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        deviceIp,
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
 
-                                Spacer(Modifier.height(20.dp))
+                                    Spacer(Modifier.height(20.dp))
 
-                                Text(
-                                    "Port",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    port,
-                                    style = MaterialTheme.typography.headlineMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.primary
-                                )
+                                    Text(
+                                        "Port",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        port,
+                                        style = MaterialTheme.typography.headlineMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
 
-                                Spacer(Modifier.height(20.dp))
+                                    Spacer(Modifier.height(20.dp))
 
-                                Text(
-                                    if (isBroadcastMode) "Connect from another device to hear audio" else "Use these details in your PC app to connect",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                    Text(
+                                        if (isBroadcastMode) "Connect from another device to hear audio" else "Use these details in your PC app to connect",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                } else {
+                                    // Broadcast mode: show nearby discovered devices
+                                    val discoveredDevices = remember { mutableStateListOf<Triple<String, Int, String>>() }
+                                    var isDiscovering by remember { mutableStateOf(false) }
+                                    val coroutineScope = rememberCoroutineScope()
+
+                                    fun doDiscovery() {
+                                        if (isDiscovering) return
+                                        isDiscovering = true
+                                        discoveredDevices.clear()
+                                        coroutineScope.launch {
+                                            withContext(Dispatchers.IO) {
+                                                var sock: DatagramSocket? = null
+                                                try {
+                                                    sock = DatagramSocket()
+                                                    sock.broadcast = true
+                                                    sock.soTimeout = 500
+                                                    val msg = AudioRelayService.DISCOVERY_REQUEST.toByteArray()
+                                                    val packet = DatagramPacket(msg, msg.size, InetAddress.getByName("255.255.255.255"), AudioRelayService.DISCOVERY_PORT)
+                                                    try { sock.send(packet) } catch (e: Exception) { }
+
+                                                    val end = System.currentTimeMillis() + 2500
+                                                    val buf = ByteArray(1024)
+                                                    while (System.currentTimeMillis() < end) {
+                                                        try {
+                                                            val resp = DatagramPacket(buf, buf.size)
+                                                            sock.receive(resp)
+                                                            val text = String(resp.data, 0, resp.length).trim()
+                                                            if (text.startsWith(AudioRelayService.DISCOVERY_RESPONSE)) {
+                                                                val parts = text.split(';')
+                                                                val respPort = parts.getOrNull(1)?.toIntOrNull() ?: 5000
+                                                                val name = parts.getOrNull(2) ?: "Aurynk"
+                                                                val ip = resp.address.hostAddress ?: ""
+                                                                val triple = Triple(ip, respPort, name)
+                                                                if (!discoveredDevices.contains(triple)) discoveredDevices.add(triple)
+                                                            }
+                                                        } catch (e: Exception) {
+                                                            // ignore
+                                                        }
+                                                    }
+                                                } catch (e: Exception) {
+                                                    Log.e("Aurynk", "Discovery failed: ${e.message}")
+                                                } finally {
+                                                    try { sock?.close() } catch (e: Exception) {}
+                                                    isDiscovering = false
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    LaunchedEffect(isBroadcastMode, isServiceRunning) {
+                                        if (isBroadcastMode && isServiceRunning) doDiscovery()
+                                    }
+
+                                    Text(
+                                        "Nearby Devices",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(Modifier.height(12.dp))
+
+                                    if (isDiscovering) {
+                                        CircularProgressIndicator(modifier = Modifier.size(36.dp))
+                                        Spacer(Modifier.height(12.dp))
+                                        Text("Searching on local network...", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    } else {
+                                        if (discoveredDevices.isEmpty()) {
+                                            Text("No nearby receivers found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Spacer(Modifier.height(8.dp))
+                                            Row {
+                                                Button(onClick = { doDiscovery() }) { Text("Refresh") }
+                                            }
+                                        } else {
+                                            Column(modifier = Modifier.fillMaxWidth()) {
+                                                discoveredDevices.forEachIndexed { idx, item ->
+                                                    val (ip, p, name) = item
+                                                    Row(
+                                                        modifier = Modifier
+                                                            .fillMaxWidth()
+                                                            .padding(8.dp)
+                                                            .clickable {
+                                                                onClientIpSelected(ip)
+                                                                Toast.makeText(context, "Selected $name ($ip:$p)", Toast.LENGTH_SHORT).show()
+                                                            },
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Column(modifier = Modifier.weight(1f)) {
+                                                            Text(name, fontWeight = FontWeight.SemiBold)
+                                                            Text("$ip:$p", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                                        }
+                                                        if (clientIp == ip) {
+                                                                Spacer(Modifier.height(6.dp))
+                                                                OutlinedButton(onClick = {
+                                                                    // clear selection; Activity callback will send disconnect to previous
+                                                                    onClientIpSelected("")
+                                                                    Toast.makeText(context, "Disconnected from $name", Toast.LENGTH_SHORT).show()
+                                                                }) {
+                                                                    Text("Disconnect")
+                                                                }
+                                                            
+                                                        } else {
+                                                            Button(onClick = {
+                                                                onClientIpSelected(ip)
+                                                                Toast.makeText(context, "Connected to $name ($ip:$p)", Toast.LENGTH_SHORT).show()
+                                                            }) {
+                                                                Text("Connect")
+                                                            }
+                                                        }
+                                                    }
+                                                    Divider()
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
 
@@ -999,7 +1170,8 @@ fun PreviewAurynkApp() {
             context = androidx.compose.ui.platform.LocalContext.current,
             isClientConnected = false,
             clientIp = "",
-            audioLevels = FloatArray(24) { 0.5f }
+                audioLevels = FloatArray(24) { 0.5f },
+                onClientIpSelected = {}
         )
     }
 }
