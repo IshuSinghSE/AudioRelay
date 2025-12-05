@@ -49,6 +49,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import android.media.projection.MediaProjectionManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
 
 class MainActivity : ComponentActivity() {
     private var connectionState by mutableStateOf(false)
@@ -151,7 +155,7 @@ class MainActivity : ComponentActivity() {
                         .windowInsetsPadding(WindowInsets.systemBars),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AurynkReceiverApp(
+                    AurynkApp(
                         context = this,
                         isClientConnected = connectionState,
                         clientIp = clientIpState,
@@ -207,7 +211,7 @@ fun getDeviceIpAddress(context: Context): String {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AurynkReceiverApp(
+fun AurynkApp(
     context: Context,
     isClientConnected: Boolean,
     clientIp: String,
@@ -225,15 +229,44 @@ fun AurynkReceiverApp(
     val useDynamicColors = prefs.getBoolean("use_dynamic_colors", true)
 
     // --- STATE ---
+    var isBroadcastMode by remember { mutableStateOf(false) } // Default: Receiver Mode
     var isServiceRunning by remember { mutableStateOf(autoStart) } // Service state based on preference
     var volume by remember { mutableFloatStateOf(0.8f) }
     var isMuted by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showSettingsDialog by remember { mutableStateOf(false) }
 
+    val mediaProjectionManager = context.getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+    val startMediaProjection = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (result.resultCode == android.app.Activity.RESULT_OK) {
+            val intent = Intent(context, AudioCaptureService::class.java).apply {
+                action = AudioCaptureService.ACTION_START
+                putExtra(AudioCaptureService.EXTRA_RESULT_DATA, result.data)
+            }
+            ContextCompat.startForegroundService(context, intent)
+            isServiceRunning = true
+        }
+    }
+
+    val recordAudioPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        if (isGranted) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startMediaProjection.launch(mediaProjectionManager.createScreenCaptureIntent())
+            }
+        } else {
+             Toast.makeText(context, "Audio recording permission is required to broadcast audio.", Toast.LENGTH_LONG).show()
+        }
+    }
+
     // Dynamic colors based on connection state
     val statusColor by animateColorAsState(
-        if (isClientConnected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+        if (isClientConnected && !isBroadcastMode) MaterialTheme.colorScheme.primary
+        else if (isBroadcastMode && isServiceRunning) MaterialTheme.colorScheme.tertiary
+        else MaterialTheme.colorScheme.error,
         label = "colorState"
     )
 
@@ -266,6 +299,55 @@ fun AurynkReceiverApp(
             verticalArrangement = Arrangement.Top
         ) {
 
+            // Mode Toggle Switch
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+                modifier = Modifier.padding(bottom = 16.dp)
+            ) {
+                Text(
+                    text = "Receiver",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (!isBroadcastMode) FontWeight.Bold else FontWeight.Normal,
+                    color = if (!isBroadcastMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Switch(
+                    checked = isBroadcastMode,
+                    onCheckedChange = {
+                        if (it) { // Trying to switch to Broadcast (Sender) Mode
+                            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                                Toast.makeText(context, "Audio Capture requires Android 10+", Toast.LENGTH_LONG).show()
+                                isBroadcastMode = false // Prevent switch
+                            } else {
+                                isBroadcastMode = true
+                                // Stop Receiver Service if running when switching modes?
+                                // Assuming we stop previous mode service to avoid conflicts or confusion
+                                if (isServiceRunning) {
+                                    val intent = Intent(context, AudioRelayService::class.java)
+                                    context.stopService(intent)
+                                    isServiceRunning = false
+                                }
+                            }
+                        } else { // Switching back to Receiver Mode
+                            isBroadcastMode = false
+                             // Stop Sender Service if running
+                            if (isServiceRunning) {
+                                val intent = Intent(context, AudioCaptureService::class.java)
+                                context.stopService(intent)
+                                isServiceRunning = false
+                            }
+                        }
+                    },
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                )
+                Text(
+                    text = "Sender",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = if (isBroadcastMode) FontWeight.Bold else FontWeight.Normal,
+                    color = if (isBroadcastMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
             // 1. HEADER SECTION: Status Indicator
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -277,7 +359,7 @@ fun AurynkReceiverApp(
                         .clip(CircleShape)
                         .background(statusColor.copy(alpha = 0.15f))
                         .then(
-                            if (isClientConnected) Modifier.clickable {
+                            if (isClientConnected && !isBroadcastMode) Modifier.clickable {
                                 isMuted = !isMuted
                                 val muteIntent = Intent(context, AudioRelayService::class.java).apply {
                                     action = AudioRelayService.ACTION_SET_VOLUME
@@ -289,7 +371,8 @@ fun AurynkReceiverApp(
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (!isClientConnected) Icons.Rounded.LinkOff 
+                        imageVector = if (isBroadcastMode) Icons.Rounded.PowerSettingsNew
+                                     else if (!isClientConnected) Icons.Rounded.LinkOff
                                      else if (isMuted) Icons.Rounded.HeadsetOff 
                                      else Icons.Rounded.Headphones,
                         contentDescription = if (isMuted) "Unmute" else "Mute",
@@ -298,17 +381,28 @@ fun AurynkReceiverApp(
                     )
                 }
                 Spacer(modifier = Modifier.height(20.dp))
+
+                val statusText = if (isBroadcastMode) {
+                    if (isServiceRunning) "Broadcasting Audio" else "Ready to Broadcast"
+                } else {
+                    if (isClientConnected) {
+                         if (isMuted) "Muted" else "Streaming Audio"
+                    } else if (isServiceRunning) "Waiting for Connection" else "Service Stopped"
+                }
+
                 Text(
-                    text = if (isClientConnected) {
-                        if (isMuted) "Muted" else "Streaming Audio"
-                    } else if (isServiceRunning) "Waiting for Connection" else "Service Stopped",
+                    text = statusText,
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onBackground
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = if (isClientConnected) "Connected: $clientIp:$port" else "Press Start to begin playing",
+                    text = if (isBroadcastMode) {
+                         if (isServiceRunning) "Listening on port $port" else "Click Start to stream"
+                    } else {
+                         if (isClientConnected) "Connected: $clientIp:$port" else "Press Start to begin listening"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -322,7 +416,7 @@ fun AurynkReceiverApp(
                     .padding(vertical = 16.dp),
                 contentAlignment = Alignment.Center
             ) {
-                androidx.compose.animation.AnimatedVisibility(visible = isClientConnected && showVisualizer) {
+                androidx.compose.animation.AnimatedVisibility(visible = isClientConnected && !isBroadcastMode && showVisualizer) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.fillMaxWidth()
@@ -356,7 +450,7 @@ fun AurynkReceiverApp(
                     }
                 }
 
-                androidx.compose.animation.AnimatedVisibility(visible = !isClientConnected && isServiceRunning) {
+                androidx.compose.animation.AnimatedVisibility(visible = (!isClientConnected && !isBroadcastMode && isServiceRunning) || (isBroadcastMode && isServiceRunning)) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
@@ -412,7 +506,7 @@ fun AurynkReceiverApp(
                                 Spacer(Modifier.height(20.dp))
 
                                 Text(
-                                    "Use these details in your PC app to connect",
+                                    if (isBroadcastMode) "Connect from another device to hear audio" else "Use these details in your PC app to connect",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -423,7 +517,7 @@ fun AurynkReceiverApp(
 
                         if (isServiceRunning) {
                             Text(
-                                "Listening for incoming connections...",
+                                if (isBroadcastMode) "Broadcasting..." else "Listening for incoming connections...",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.secondary
                             )
@@ -435,13 +529,30 @@ fun AurynkReceiverApp(
             // 3. BOTTOM SECTION: Service Control Button
                 Button(
                 onClick = {
-                    isServiceRunning = !isServiceRunning
-                    if (!isServiceRunning) {
-                        val intent = Intent(context, AudioRelayService::class.java)
-                        context.stopService(intent)
+                    if (isServiceRunning) {
+                        // STOP
+                        isServiceRunning = false
+                        if (isBroadcastMode) {
+                             val intent = Intent(context, AudioCaptureService::class.java)
+                             intent.action = AudioCaptureService.ACTION_STOP
+                             context.startService(intent)
+                        } else {
+                            val intent = Intent(context, AudioRelayService::class.java)
+                            context.stopService(intent)
+                        }
                     } else {
-                        val intent = Intent(context, AudioRelayService::class.java)
-                        ContextCompat.startForegroundService(context, intent)
+                        // START
+                        if (isBroadcastMode) {
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                                recordAudioPermissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                            } else {
+                                Toast.makeText(context, "Audio Capture requires Android 10+", Toast.LENGTH_LONG).show()
+                            }
+                        } else {
+                            isServiceRunning = true
+                            val intent = Intent(context, AudioRelayService::class.java)
+                            ContextCompat.startForegroundService(context, intent)
+                        }
                     }
                 },
                 modifier = Modifier
@@ -883,7 +994,7 @@ fun FakeAudioVisualizer() {
 fun PreviewAurynkApp() {
     MaterialTheme(colorScheme = darkColorScheme()) {
         // For preview, create a mock context
-        AurynkReceiverApp(
+        AurynkApp(
             context = androidx.compose.ui.platform.LocalContext.current,
             isClientConnected = false,
             clientIp = "",
