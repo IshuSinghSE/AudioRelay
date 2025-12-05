@@ -23,6 +23,8 @@ import java.io.IOException
 import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.DatagramSocket
+import java.net.DatagramPacket
 import java.util.concurrent.CopyOnWriteArrayList
 
 class AudioCaptureService : Service() {
@@ -35,6 +37,8 @@ class AudioCaptureService : Service() {
     private var targetIp: String = ""
     private var targetPort: Int = 5000
     private var isStreaming = false
+    private var discoveryThread: Thread? = null
+    private var discoverySocket: DatagramSocket? = null
 
     companion object {
         const val ACTION_START = "ACTION_START"
@@ -45,6 +49,7 @@ class AudioCaptureService : Service() {
         const val NOTIFICATION_ID = 1002
         const val CHANNEL_ID = "AudioCaptureChannel"
         const val TAG = "AudioCaptureService"
+        const val DISCOVERY_PORT = 5002
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -52,6 +57,77 @@ class AudioCaptureService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
+        startDiscoveryResponder()
+    }
+    
+    private fun startDiscoveryResponder() {
+        discoveryThread = Thread {
+            try {
+                discoverySocket = DatagramSocket(DISCOVERY_PORT)
+                val buffer = ByteArray(1024)
+                Log.d(TAG, "UDP listener started on port $DISCOVERY_PORT")
+                
+                while (!Thread.currentThread().isInterrupted) {
+                    try {
+                        val packet = DatagramPacket(buffer, buffer.size)
+                        discoverySocket?.receive(packet)
+                        val msg = String(packet.data, 0, packet.length).trim()
+                        
+                        Log.d(TAG, "Received UDP message: $msg from ${packet.address.hostAddress}")
+                        
+                        if (msg.startsWith("AURYNK_ACCEPT")) {
+                            // Connection accepted by receiver
+                            try {
+                                val bcast = Intent("io.github.aurynk.CLIENT_CONNECTION")
+                                bcast.setPackage(packageName)
+                                bcast.putExtra("connected", true)
+                                bcast.putExtra("client_ip", packet.address.hostAddress ?: "")
+                                sendBroadcast(bcast)
+                                Log.i(TAG, "Connection ACCEPTED by ${packet.address.hostAddress}")
+                            } catch (ex: Exception) {
+                                Log.e(TAG, "Failed to broadcast connection accepted: ${ex.message}", ex)
+                            }
+                        } else if (msg.startsWith("AURYNK_REJECT")) {
+                            // Connection rejected by receiver
+                            try {
+                                val bcast = Intent("io.github.aurynk.CLIENT_CONNECTION")
+                                bcast.setPackage(packageName)
+                                bcast.putExtra("connected", false)
+                                bcast.putExtra("client_ip", "")
+                                sendBroadcast(bcast)
+                                Log.i(TAG, "Connection REJECTED by ${packet.address.hostAddress}")
+                                // Stop the service since connection was rejected
+                                stopSelf()
+                            } catch (ex: Exception) {
+                                Log.e(TAG, "Failed to broadcast connection rejected: ${ex.message}", ex)
+                            }
+                        } else if (msg.startsWith("AURYNK_DISCONNECT")) {
+                            // Receiver disconnected
+                            try {
+                                val bcast = Intent("io.github.aurynk.CLIENT_CONNECTION")
+                                bcast.setPackage(packageName)
+                                bcast.putExtra("connected", false)
+                                bcast.putExtra("client_ip", "")
+                                sendBroadcast(bcast)
+                                Log.i(TAG, "Disconnect request from ${packet.address.hostAddress}")
+                                stopSelf()
+                            } catch (ex: Exception) {
+                                Log.e(TAG, "Failed to broadcast disconnect: ${ex.message}", ex)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        if (!Thread.currentThread().isInterrupted) {
+                            Log.e(TAG, "Error receiving UDP packet: ${e.message}")
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "UDP listener failed: ${e.message}")
+            } finally {
+                try { discoverySocket?.close() } catch (e: Exception) {}
+            }
+        }
+        discoveryThread?.start()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -208,6 +284,14 @@ class AudioCaptureService : Service() {
     override fun onDestroy() {
         isStreaming = false
         serviceJob.cancel()
+        
+        // Stop UDP listener
+        try {
+            discoveryThread?.interrupt()
+            discoverySocket?.close()
+        } catch (e: Exception) {
+            Log.e(TAG, "Error stopping UDP listener: ${e.message}")
+        }
         
         try {
             clientSocket?.close()

@@ -83,22 +83,50 @@ class AudioRelayService : Service() {
                         val msg = String(packet.data, 0, packet.length).trim()
                         if (msg == DISCOVERY_REQUEST) {
                             // Respond with service info — desktop will use packet source address
-                            val response = "$DISCOVERY_RESPONSE;5000;Aurynk"
+                            val deviceName = Build.MODEL.ifEmpty { "Android Device" }.replace(";", "_")
+                            val response = "$DISCOVERY_RESPONSE;5000;$deviceName"
                             val respData = response.toByteArray()
                             val respPacket = DatagramPacket(respData, respData.size, packet.address, packet.port)
                             socket.send(respPacket)
-                            Log.d("AudioRelay", "Discovery request responded to ${packet.address}")
+                            Log.d("AudioRelay", "Discovery request responded to ${packet.address} with name: $deviceName")
                         } else if (msg.startsWith(CONNECT_REQUEST)) {
-                            // A sender selected this device — notify the local UI that a client is 'connected' (informational)
+                            // A sender wants to connect — send confirmation request to UI
+                            try {
+                                val parts = msg.split(";")
+                                val senderName = parts.getOrNull(1) ?: "Android Device"
+                                val bcast = Intent(MainActivity.ACTION_CONNECTION_REQUEST)
+                                bcast.setPackage(packageName)
+                                bcast.putExtra("client_ip", packet.address.hostAddress ?: "")
+                                bcast.putExtra("client_name", senderName)
+                                sendBroadcast(bcast)
+                                Log.i("AudioRelay", "Connect request from $senderName (${packet.address.hostAddress}), sent to UI for confirmation")
+                            } catch (ex: Exception) {
+                                Log.e("AudioRelay", "Failed to broadcast connect request: ${ex.message}", ex)
+                            }
+                        } else if (msg.startsWith("AURYNK_ACCEPT")) {
+                            // Connection accepted - could be received by sender OR receiver
+                            // If receiver gets this, it means the sender acknowledged the acceptance
                             try {
                                 val bcast = Intent("io.github.aurynk.CLIENT_CONNECTION")
                                 bcast.setPackage(packageName)
                                 bcast.putExtra("connected", true)
                                 bcast.putExtra("client_ip", packet.address.hostAddress ?: "")
                                 sendBroadcast(bcast)
-                                Log.i("AudioRelay", "Connect request received from ${packet.address.hostAddress}, broadcasted CLIENT_CONNECTION")
+                                Log.i("AudioRelay", "Connection accepted notification from ${packet.address.hostAddress}")
                             } catch (ex: Exception) {
-                                Log.e("AudioRelay", "Failed to broadcast connect request: ${ex.message}", ex)
+                                Log.e("AudioRelay", "Failed to broadcast connection accepted: ${ex.message}", ex)
+                            }
+                        } else if (msg.startsWith("AURYNK_REJECT")) {
+                            // Connection rejected by receiver
+                            try {
+                                val bcast = Intent("io.github.aurynk.CLIENT_CONNECTION")
+                                bcast.setPackage(packageName)
+                                bcast.putExtra("connected", false)
+                                bcast.putExtra("client_ip", "")
+                                sendBroadcast(bcast)
+                                Log.i("AudioRelay", "Connection rejected by ${packet.address.hostAddress}")
+                            } catch (ex: Exception) {
+                                Log.e("AudioRelay", "Failed to broadcast connection rejected: ${ex.message}", ex)
                             }
                         } else if (msg.startsWith(DISCONNECT_REQUEST)) {
                             try {

@@ -66,6 +66,13 @@ class MainActivity : ComponentActivity() {
     private var connectionState by mutableStateOf(false)
     private var clientIpState by mutableStateOf("")
     private var audioLevels by mutableStateOf(FloatArray(24) { 0f })
+    private var pendingConnectionRequest by mutableStateOf<Pair<String, String>?>(null) // IP, Name
+    
+    companion object {
+        const val ACTION_CONNECTION_REQUEST = "io.github.aurynk.CONNECTION_REQUEST"
+        const val ACTION_CONNECTION_RESPONSE = "io.github.aurynk.CONNECTION_RESPONSE"
+        const val EXTRA_APPROVED = "approved"
+    }
     
     private val connectionReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context?, intent: AndroidIntent?) {
@@ -77,6 +84,22 @@ class MainActivity : ComponentActivity() {
                     Log.d("MainActivity", "Broadcast received: connected=$connected, ip=$ip")
                     connectionState = connected
                     clientIpState = ip
+                }
+                ACTION_CONNECTION_REQUEST -> {
+                    val ip = intent.getStringExtra("client_ip") ?: ""
+                    val name = intent.getStringExtra("client_name") ?: "Unknown Device"
+                    Log.d("MainActivity", "Connection request from: $name ($ip)")
+                    
+                    ctx ?: return
+                    val prefs = PreferenceManager.getDefaultSharedPreferences(ctx)
+                    val requireConfirm = prefs.getBoolean("require_connection_confirm", true)
+                    
+                    if (requireConfirm) {
+                        pendingConnectionRequest = Pair(ip, name)
+                    } else {
+                        // Auto-accept
+                        sendConnectionResponse(ip, true)
+                    }
                 }
                 AudioRelayService.ACTION_AUDIO_LEVEL -> {
                     val levels = intent.getFloatArrayExtra(AudioRelayService.EXTRA_AUDIO_LEVELS)
@@ -117,6 +140,7 @@ class MainActivity : ComponentActivity() {
         // Register broadcast receiver with proper flags for all Android versions
         val filter = IntentFilter().apply {
             addAction("io.github.aurynk.CLIENT_CONNECTION")
+            addAction(ACTION_CONNECTION_REQUEST)
             addAction(AudioRelayService.ACTION_AUDIO_LEVEL)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -174,6 +198,16 @@ class MainActivity : ComponentActivity() {
                         isClientConnected = connectionState,
                         clientIp = clientIpState,
                         audioLevels = audioLevels,
+                        pendingConnectionRequest = pendingConnectionRequest,
+                        onConnectionResponse = { approved ->
+                            pendingConnectionRequest?.let { (ip, _) ->
+                                sendConnectionResponse(ip, approved)
+                                if (!approved) {
+                                    Toast.makeText(this, "Connection rejected", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                            pendingConnectionRequest = null
+                        },
                         onClientIpSelected = { ip ->
                             val previous = clientIpState
                             clientIpState = ip
@@ -198,10 +232,11 @@ class MainActivity : ComponentActivity() {
             var sock: DatagramSocket? = null
             try {
                 sock = DatagramSocket()
-                val msg = AudioRelayService.CONNECT_REQUEST.toByteArray()
+                val deviceName = getDeviceName()
+                val msg = "${AudioRelayService.CONNECT_REQUEST};$deviceName".toByteArray()
                 val packet = DatagramPacket(msg, msg.size, InetAddress.getByName(targetIp), AudioRelayService.DISCOVERY_PORT)
                 sock.send(packet)
-                Log.d("MainActivity", "Sent CONNECT to $targetIp")
+                Log.d("MainActivity", "Sent CONNECT to $targetIp with device name: $deviceName")
             } catch (e: Exception) {
                 Log.e("MainActivity", "Failed to send connect request: ${e.message}")
             } finally {
@@ -227,6 +262,32 @@ class MainActivity : ComponentActivity() {
         }.start()
     }
     
+    private fun sendConnectionResponse(targetIp: String, approved: Boolean) {
+        Thread {
+            var sock: DatagramSocket? = null
+            try {
+                sock = DatagramSocket()
+                val msg = if (approved) "AURYNK_ACCEPT" else "AURYNK_REJECT"
+                val packet = DatagramPacket(msg.toByteArray(), msg.length, InetAddress.getByName(targetIp), AudioRelayService.DISCOVERY_PORT)
+                sock.send(packet)
+                Log.d("MainActivity", "Sent connection response: $msg to $targetIp")
+                
+                // Update local UI state if accepted (receiver side)
+                if (approved) {
+                    runOnUiThread {
+                        connectionState = true
+                        clientIpState = targetIp
+                        Log.d("MainActivity", "Receiver: Updated local connection state to connected with $targetIp")
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Failed to send connection response: ${e.message}")
+            } finally {
+                try { sock?.close() } catch (e: Exception) {}
+            }
+        }.start()
+    }
+    
     override fun onDestroy() {
         super.onDestroy()
         try {
@@ -246,6 +307,32 @@ class MainActivity : ComponentActivity() {
             )
             notificationManager.createNotificationChannel(channel)
         }
+    }
+}
+
+// Helper function to get user-friendly device name
+fun getDeviceName(): String {
+    return try {
+        // Try to get marketing name first (e.g., "Redmi Note 14 5G")
+        val marketingName = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Build.DEVICE
+        } else {
+            null
+        }
+        
+        // Fallback: Use MANUFACTURER + MODEL or just MODEL
+        val manufacturer = Build.MANUFACTURER?.replaceFirstChar { it.uppercase() } ?: ""
+        val model = Build.MODEL ?: "Android Device"
+        
+        when {
+            // If model already contains manufacturer name, just use model
+            model.startsWith(manufacturer, ignoreCase = true) -> model
+            // Otherwise combine manufacturer + model
+            manufacturer.isNotEmpty() -> "$manufacturer $model"
+            else -> model
+        }
+    } catch (e: Exception) {
+        "Android Device"
     }
 }
 
@@ -277,6 +364,8 @@ fun AurynkApp(
     isClientConnected: Boolean,
     clientIp: String,
     audioLevels: FloatArray = FloatArray(24) { 0f },
+    pendingConnectionRequest: Pair<String, String>? = null,
+    onConnectionResponse: (Boolean) -> Unit = {},
     onClientIpSelected: (String) -> Unit
 ) {
     val deviceIp = remember { getDeviceIpAddress(context) }
@@ -287,6 +376,8 @@ fun AurynkApp(
     val autoStart = prefs.getBoolean("auto_start_service", false)
     val showVisualizer = prefs.getBoolean("show_visualizer", true)
     val showVolumeSlider = prefs.getBoolean("show_volume_slider", true)
+    val requireConnectionConfirm = prefs.getBoolean("require_connection_confirm", true)
+    val audioOutputMode = prefs.getString("audio_output_mode", "receiver") ?: "receiver"
     val themeMode = prefs.getString("theme_mode", "system") ?: "system"
     val useDynamicColors = prefs.getBoolean("use_dynamic_colors", true)
 
@@ -317,6 +408,14 @@ fun AurynkApp(
             }
             ContextCompat.startForegroundService(context, intent)
             isServiceRunning = true
+        }
+    }
+    
+    // Reset selection when service stops unexpectedly
+    LaunchedEffect(isClientConnected) {
+        if (!isClientConnected && isBroadcastMode && isServiceRunning) {
+            // Connection was lost
+            isServiceRunning = false
         }
     }
 
@@ -733,15 +832,36 @@ fun AurynkApp(
                                                             )
                                                         }
                                                         Spacer(Modifier.width(8.dp))
-                                                        if (clientIp == ip) {
+                                                        // Show connected state only if both selected AND service is running
+                                                        val isConnectedToThis = clientIp == ip && isServiceRunning
+                                                        if (isConnectedToThis) {
                                                             OutlinedButton(
                                                                 onClick = {
+                                                                    // Stop the service when disconnecting
+                                                                    isServiceRunning = false
+                                                                    val intent = Intent(context, AudioCaptureService::class.java)
+                                                                    intent.action = AudioCaptureService.ACTION_STOP
+                                                                    context.startService(intent)
                                                                     onClientIpSelected("")
                                                                     Toast.makeText(context, "Disconnected from $name", Toast.LENGTH_SHORT).show()
                                                                 },
-                                                                modifier = Modifier.wrapContentWidth()
+                                                                modifier = Modifier.wrapContentWidth(),
+                                                                colors = ButtonDefaults.outlinedButtonColors(
+                                                                    contentColor = MaterialTheme.colorScheme.error
+                                                                )
                                                             ) {
                                                                 Text("Disconnect", style = MaterialTheme.typography.labelMedium)
+                                                            }
+                                                        } else if (clientIp == ip && !isServiceRunning) {
+                                                            // Selected but not streaming
+                                                            OutlinedButton(
+                                                                onClick = {
+                                                                    onClientIpSelected("")
+                                                                    Toast.makeText(context, "Deselected $name", Toast.LENGTH_SHORT).show()
+                                                                },
+                                                                modifier = Modifier.wrapContentWidth()
+                                                            ) {
+                                                                Text("Selected", style = MaterialTheme.typography.labelMedium)
                                                             }
                                                         } else {
                                                             Button(
@@ -853,6 +973,70 @@ fun AurynkApp(
         }
     }
     
+    // Connection Request Confirmation Dialog
+    pendingConnectionRequest?.let { (ip, name) ->
+        AlertDialog(
+            onDismissRequest = { onConnectionResponse(false) },
+            icon = {
+                Icon(
+                    imageVector = Icons.Rounded.Headphones,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(48.dp)
+                )
+            },
+            title = {
+                Text(
+                    "Incoming Connection",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "$name wants to connect and stream audio to this device.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = "IP: $ip",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "Do you want to allow this connection?",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = { onConnectionResponse(true) },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Text(text = "Accept")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(onClick = { onConnectionResponse(false) }) {
+                    Text(text = "Reject")
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface,
+            shape = RoundedCornerShape(20.dp)
+        )
+    }
+    
     // About Dialog
     if (showAboutDialog) {
         AlertDialog(
@@ -952,6 +1136,8 @@ fun AurynkApp(
         var tempAutoStart by remember { mutableStateOf(prefs.getBoolean("auto_start_service", false)) }
         var tempShowVisualizer by remember { mutableStateOf(prefs.getBoolean("show_visualizer", true)) }
         var tempShowVolumeSlider by remember { mutableStateOf(prefs.getBoolean("show_volume_slider", true)) }
+        var tempRequireConnectionConfirm by remember { mutableStateOf(prefs.getBoolean("require_connection_confirm", true)) }
+        var tempAudioOutputMode by remember { mutableStateOf(prefs.getString("audio_output_mode", "receiver") ?: "receiver") }
         var tempThemeMode by remember { mutableStateOf(prefs.getString("theme_mode", "system") ?: "system") }
         var tempUseDynamicColors by remember { mutableStateOf(prefs.getBoolean("use_dynamic_colors", true)) }
         
@@ -966,7 +1152,9 @@ fun AurynkApp(
             },
             text = {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
                     // Auto-start service setting
@@ -991,6 +1179,72 @@ fun AurynkApp(
                             checked = tempAutoStart,
                             onCheckedChange = { tempAutoStart = it }
                         )
+                    }
+                    
+                    HorizontalDivider()
+                    
+                    // Connection confirmation setting
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Require Connection Confirmation",
+                                style = MaterialTheme.typography.bodyLarge,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "Ask before accepting incoming connections",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = tempRequireConnectionConfirm,
+                            onCheckedChange = { tempRequireConnectionConfirm = it }
+                        )
+                    }
+                    
+                    HorizontalDivider()
+                    
+                    // Audio output mode setting
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        Text(
+                            text = "Audio Output",
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            text = "Where to play received audio",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = tempAudioOutputMode == "This Device",
+                                onClick = { tempAudioOutputMode = "This Device" },
+                                label = { Text("This Device") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = tempAudioOutputMode == "sender",
+                                onClick = { tempAudioOutputMode = "sender" },
+                                label = { Text("Sender") },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = tempAudioOutputMode == "both",
+                                onClick = { tempAudioOutputMode = "both" },
+                                label = { Text("Both") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
                     }
                     
                     HorizontalDivider()
@@ -1122,6 +1376,8 @@ fun AurynkApp(
                             putBoolean("auto_start_service", tempAutoStart)
                             putBoolean("show_volume_slider", tempShowVolumeSlider)
                             putBoolean("show_visualizer", tempShowVisualizer)
+                            putBoolean("require_connection_confirm", tempRequireConnectionConfirm)
+                            putString("audio_output_mode", tempAudioOutputMode)
                             putString("theme_mode", tempThemeMode)
                             putBoolean("use_dynamic_colors", tempUseDynamicColors)
                             apply()
