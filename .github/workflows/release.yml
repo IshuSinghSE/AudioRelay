@@ -1,10 +1,9 @@
 name: Android Release Build and Deploy
 
 on:
-  pull_request:
-    types: [closed]
-    branches:
-      - main
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       deploy_to_playstore:
@@ -24,9 +23,9 @@ on:
 
 jobs:
   release:
-    # Only run if PR was merged or manual trigger
+    # Only run for pushed tags matching v* or manual trigger
     if: |
-      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     
