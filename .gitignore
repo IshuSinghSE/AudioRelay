@@ -72,3 +72,8 @@ Thumbs.db
 temp/
 tmp/
 coverage/fastlane/google-play-key.json
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/test_output

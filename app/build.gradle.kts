@@ -46,6 +46,17 @@ android {
                 "proguard-rules.pro"
             )
             signingConfig = signingConfigs.getByName("release")
+            
+            // Generate native debug symbols for crash reporting
+            ndk {
+                debugSymbolLevel = "FULL"
+            }
+        }
+        debug {
+            // Also generate symbols for debug builds
+            ndk {
+                debugSymbolLevel = "FULL"
+            }
         }
     }
     compileOptions {
