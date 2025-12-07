@@ -195,7 +195,7 @@ jobs:
       - name: Upload Release Assets (if present)
         run: |
           set -euo pipefail
-          TAG=v${{ steps.extract_version.outputs.VERSION_NAME }}
+          TAG="${{ github.ref_name }}"
           APK=app/build/outputs/apk/release/aurelay-v${{ steps.extract_version.outputs.VERSION_NAME }}.apk
           AAB=app/build/outputs/bundle/release/app-release.aab
           echo "Installing gh CLI"
