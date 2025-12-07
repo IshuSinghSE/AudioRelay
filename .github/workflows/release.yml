@@ -1,4 +1,7 @@
-name: Android Release Build and Deploy
+name: Release & Publish
+
+permissions:
+  contents: write
 
 on:
   push:
@@ -7,26 +10,19 @@ on:
   workflow_dispatch:
     inputs:
       deploy_to_playstore:
-        description: 'Deploy to Play Store'
+        description: 'Force Deploy to Play Store?'
         required: true
         type: boolean
         default: false
       track:
-        description: 'Play Store Track (internal/beta/production)'
+        description: 'Track (internal/alpha/beta/production)'
         required: true
         type: choice
-        options:
-          - internal
-          - beta
-          - production
+        options: [internal, alpha, production]
         default: 'internal'
 
 jobs:
   release:
-    # Only run for pushed tags matching v* or manual trigger
-    if: |
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
-      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     
     steps:
@@ -35,12 +31,24 @@ jobs:
         with:
           fetch-depth: 0
 
+      # 1. Logic: Detect RC vs Production
+      - name: Check Tag Type
+        id: check_tag
+        run: |
+          if [[ "${{ github.ref_name }}" == *-* ]] && [[ "${{ github.event_name }}" != "workflow_dispatch" ]]; then
+            echo "IS_PRERELEASE=true" >> $GITHUB_OUTPUT
+            echo "Status: Pre-release (RC detected) -> GitHub APK Only"
+          else
+            echo "IS_PRERELEASE=false" >> $GITHUB_OUTPUT
+            echo "Status: Production Release -> GitHub APK + Play Store AAB"
+          fi
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
+          cache: 'gradle' # Critical for speed
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -49,7 +57,8 @@ jobs:
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_FILE }}
         run: |
-          echo "$KEYSTORE_BASE64" | base64 -d > aurelay-release.jks
+          mkdir -p app
+          echo "$KEYSTORE_BASE64" | base64 -d > app/aurelay-release.jks
 
       - name: Create key.properties
         env:
@@ -64,120 +73,64 @@ jobs:
           storeFile=aurelay-release.jks
           EOF
 
-      - name: Extract version from build.gradle.kts
-        id: extract_version
-        run: |
-          VERSION_NAME=$(grep 'versionName' app/build.gradle.kts | sed 's/.*versionName = "\(.*\)".*/\1/')
-          VERSION_CODE=$(grep 'versionCode' app/build.gradle.kts | sed 's/.*versionCode = \(.*\)/\1/')
-          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_OUTPUT
-          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_OUTPUT
-          echo "Version: $VERSION_NAME ($VERSION_CODE)"
+      - name: Read Changelog
+        id: changelog_reader
+        uses: mindsers/changelog-reader-action@v2.2.3
+        with:
+          version: ${{ github.ref_name }}
+          path: ./CHANGELOG.md
+        continue-on-error: true
 
-      - name: Build Release APK
-        run: ./gradlew assembleRelease
+      # 2. Build: Run BOTH tasks in one command to save overhead
+      # assembleRelease = APK
+      # bundleRelease = AAB
+      - name: Build APK and AAB
+        run: ./gradlew assembleRelease bundleRelease
 
-      - name: Build Release AAB
-        run: ./gradlew bundleRelease
-
-      - name: Sign APK
-        run: |
-          echo "APK already signed during build"
-          ls -lh app/build/outputs/apk/release/
-
-      - name: Verify APK Signature
-        run: |
-          apksigner verify --verbose app/build/outputs/apk/release/app-release.apk
-
+      # 3. Rename APK for GitHub (aurelay-v1.2.0-release.apk)
       - name: Rename APK
         run: |
-          mv app/build/outputs/apk/release/app-release.apk \
-             app/build/outputs/apk/release/aurelay-v${{ steps.extract_version.outputs.VERSION_NAME }}.apk
+          # Find the default APK
+          APK_PATH=app/build/outputs/apk/release/app-release.apk
+          
+          # Define new name
+          NEW_NAME=app/build/outputs/apk/release/aurelay-${{ github.ref_name }}-release.apk
+          
+          # Rename
+          echo "Renaming $APK_PATH to $NEW_NAME"
+          mv $APK_PATH $NEW_NAME
 
-      - name: Create Release Notes
-        id: release_notes
-        run: |
-          cat > release_notes.md << 'EOF'
-          ## Aurelay v${{ steps.extract_version.outputs.VERSION_NAME }}
-          
-          ### Changes
-          - Auto-generated release from PR merge
-          - Version Code: ${{ steps.extract_version.outputs.VERSION_CODE }}
-          
-          ### Installation
-          Download and install the APK below on your Android device.
-          
-          **Minimum Android Version:** Android 7.0 (API 24)
-          **Target Android Version:** Android 14 (API 36)
-          
-          ### Verification
-          After installation, verify the app signature matches the one shown in the repository.
-          EOF
-          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
-          cat release_notes.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
+      # 4. GitHub Release: Uploads ONLY the Renamed APK
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          tag_name: v${{ steps.extract_version.outputs.VERSION_NAME }}
-          name: Aurelay v${{ steps.extract_version.outputs.VERSION_NAME }}
-          body_path: release_notes.md
-          files: |
-            app/build/outputs/apk/release/aurelay-v${{ steps.extract_version.outputs.VERSION_NAME }}.apk
-            app/build/outputs/bundle/release/app-release.aab
+          tag_name: ${{ github.ref_name }}
+          name: Aurelay ${{ github.ref_name }}
+          body: ${{ steps.changelog_reader.outputs.changes || 'Automated Release Build' }}
+          # Point explicitly to the NEW name
+          files: app/build/outputs/apk/release/aurelay-${{ github.ref_name }}-release.apk
           draft: false
-          prerelease: false
+          prerelease: ${{ steps.check_tag.outputs.IS_PRERELEASE }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set up Ruby for Fastlane
+      # 5. Play Store: Uploads ONLY the AAB (Original Name)
+      - name: Upload to Play Store
         if: |
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_to_playstore == 'true') ||
-          (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'deploy-playstore'))
-        uses: ruby/setup-ruby@v1
+          (steps.check_tag.outputs.IS_PRERELEASE == 'false') || 
+          (github.event_name == 'workflow_dispatch' && inputs.deploy_to_playstore == true)
+        uses: r0adkll/upload-google-play@v1
         with:
-          ruby-version: '3.2'
-          bundler-cache: false
+          serviceAccountJsonPlainText: ${{ secrets.PLAY_STORE_JSON_KEY }}
+          packageName: com.devindeed.aurelay
+          # Point to the AAB (Standard name)
+          releaseFiles: app/build/outputs/bundle/release/app-release.aab
+          track: ${{ inputs.track || 'internal' }}
+          status: completed
+          releaseName: ${{ github.ref_name }}
 
-      - name: Install Fastlane
-        if: |
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_to_playstore == 'true') ||
-          (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'deploy-playstore'))
-        run: |
-          gem install fastlane -N
-          fastlane --version
-
-      - name: Create Play Store JSON Key
-        if: |
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_to_playstore == 'true') ||
-          (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'deploy-playstore'))
-        env:
-          PLAY_STORE_JSON_KEY: ${{ secrets.PLAY_STORE_JSON_KEY }}
-        run: |
-          echo "$PLAY_STORE_JSON_KEY" > play-store-key.json
-
-      - name: Deploy to Play Store
-        if: |
-          (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_to_playstore == 'true') ||
-          (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'deploy-playstore'))
-        env:
-          SUPPLY_JSON_KEY: ./play-store-key.json
-        run: |
-          TRACK="${{ github.event.inputs.track || 'internal' }}"
-          fastlane android $TRACK
-
-      - name: Cleanup Sensitive Files
+      - name: Cleanup Secrets
         if: always()
         run: |
-          rm -f aurelay-release.jks
+          rm -f app/aurelay-release.jks
           rm -f key.properties
-          rm -f play-store-key.json
-
-      - name: Upload Build Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-artifacts-v${{ steps.extract_version.outputs.VERSION_NAME }}
-          path: |
-            app/build/outputs/apk/release/*.apk
-            app/build/outputs/bundle/release/*.aab
-          retention-days: 30
