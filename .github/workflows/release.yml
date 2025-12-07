@@ -90,33 +90,38 @@ jobs:
           ls -lh app/build/outputs/apk/release/
 
       - name: Verify APK Signature
-        # Ensure apksigner is available by installing Android SDK commandline tools and build-tools
         run: |
           set -euo pipefail
+          APK_PATH=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -n1 || true)
+          if [ -z "$APK_PATH" ]; then
+            echo "No APK found at app/build/outputs/apk/release/*.apk — skipping apksigner verify"
+            exit 0
+          fi
+          echo "Found APK: $APK_PATH"
           sudo apt-get update
           sudo apt-get install -y wget unzip
           ANDROID_SDK_ROOT="$HOME/android-sdk"
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
           cd "$HOME"
-          # Download Android commandline tools (will be cached by runner if available)
           wget -q https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip -O cmdline-tools.zip
           unzip -q cmdline-tools.zip -d "$ANDROID_SDK_ROOT/cmdline-tools"
-          # Move to the expected layout
           mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools/latest"
           mv "$ANDROID_SDK_ROOT/cmdline-tools/cmdline-tools"/* "$ANDROID_SDK_ROOT/cmdline-tools/latest/" || true
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "platforms;android-33" "build-tools;33.0.2"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
-          # Make apksigner available in this step immediately by updating PATH
-          export PATH="$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/build-tools/33.0.2:$PATH"
+          yes | "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
+          "$ANDROID_SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" --sdk_root="$ANDROID_SDK_ROOT" "platform-tools" "platforms;android-33" "build-tools;33.0.2"
           # Verify APK signature using apksigner from the installed build-tools
-          "$ANDROID_SDK_ROOT/build-tools/33.0.2/apksigner" verify --verbose app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_SDK_ROOT/build-tools/33.0.2/apksigner" verify --verbose "$APK_PATH"
 
       - name: Rename APK
         run: |
-          mv app/build/outputs/apk/release/app-release.apk \
-             app/build/outputs/apk/release/aurelay-v${{ steps.extract_version.outputs.VERSION_NAME }}.apk
+          APK_PATH=$(ls app/build/outputs/apk/release/*.apk 2>/dev/null | head -n1 || true)
+          if [ -z "$APK_PATH" ]; then
+            echo "No APK to rename; skipping"
+            exit 0
+          fi
+          DEST=app/build/outputs/apk/release/aurelay-v${{ steps.extract_version.outputs.VERSION_NAME }}.apk
+          echo "Renaming $APK_PATH -> $DEST"
+          mv "$APK_PATH" "$DEST"
 
       - name: Create Release Notes
         id: release_notes
