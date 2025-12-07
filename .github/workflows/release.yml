@@ -198,23 +198,39 @@ jobs:
           TAG="${{ github.ref_name }}"
           APK=app/build/outputs/apk/release/aurelay-v${{ steps.extract_version.outputs.VERSION_NAME }}.apk
           AAB=app/build/outputs/bundle/release/app-release.aab
+          
           echo "Installing gh CLI"
-          sudo apt-get update
+          sudo apt-get update -qq
           sudo apt-get install -y gh
+          
           echo "Authenticating gh using GITHUB_TOKEN"
           echo "$GITHUB_TOKEN" | gh auth login --with-token
+          
+          echo "Checking release status for tag: $TAG"
+          gh release view "$TAG" || {
+            echo "Release not found for tag $TAG"
+            exit 1
+          }
+          
+          echo "Listing build outputs:"
+          ls -lah app/build/outputs/apk/release/ || true
+          ls -lah app/build/outputs/bundle/release/ || true
+          
           if [ -f "$APK" ]; then
             echo "Uploading APK: $APK"
-            gh release upload "$TAG" "$APK" --clobber || true
+            gh release upload "$TAG" "$APK" --clobber
           else
-            echo "APK not found: $APK"
+            echo "Warning: APK not found: $APK"
           fi
+          
           if [ -f "$AAB" ]; then
             echo "Uploading AAB: $AAB"
-            gh release upload "$TAG" "$AAB" --clobber || true
+            gh release upload "$TAG" "$AAB" --clobber
           else
-            echo "AAB not found: $AAB"
+            echo "Warning: AAB not found: $AAB"
           fi
+          
+          echo "Upload complete"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
