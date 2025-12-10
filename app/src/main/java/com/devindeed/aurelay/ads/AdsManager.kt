@@ -12,7 +12,12 @@ import com.google.android.gms.ads.RequestConfiguration
 object AdsManager {
     fun initialize(context: Context) {
         // Force test device IDs during development to avoid serving live ads
-        val testDeviceIds = listOf(AdRequest.DEVICE_ID_EMULATOR)
+        // Include emulator plus your physical test device (Redmi Note 14)
+        // Provided device identifier: a28d0f01-d4a2-4d31-ae72-632c77dbb682
+        val testDeviceIds = listOf(
+            AdRequest.DEVICE_ID_EMULATOR,
+            "a28d0f01-d4a2-4d31-ae72-632c77dbb682"
+        )
         val configuration = RequestConfiguration.Builder()
             .setTestDeviceIds(testDeviceIds)
             .build()
