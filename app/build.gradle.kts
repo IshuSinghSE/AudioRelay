@@ -15,8 +15,8 @@ android {
         applicationId = "com.devindeed.aurelay"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "1.2.0"
+        versionCode = 5
+        versionName = "1.3.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -27,12 +27,12 @@ android {
             val keystoreProperties = Properties()
             if (keystorePropertiesFile.exists()) {
                 keystoreProperties.load(FileInputStream(keystorePropertiesFile))
-            }
 
-            storeFile = file(keystoreProperties["storeFile"] ?: "aurelay-release.jks")
-            storePassword = keystoreProperties["storePassword"]?.toString()
-            keyAlias = keystoreProperties["keyAlias"]?.toString()
-            keyPassword = keystoreProperties["keyPassword"]?.toString()
+                keystoreProperties["storeFile"]?.let { storeFile = file(it.toString()) }
+                keystoreProperties["storePassword"]?.let { storePassword = it.toString() }
+                keystoreProperties["keyAlias"]?.let { keyAlias = it.toString() }
+                keystoreProperties["keyPassword"]?.let { keyPassword = it.toString() }
+            }
         }
     }
 
@@ -51,12 +51,16 @@ android {
             ndk {
                 debugSymbolLevel = "FULL"
             }
+            // Kill-switch for Ads in production builds (false by default)
+            buildConfigField("boolean", "ENABLE_ADS", "false")
         }
         debug {
             // Also generate symbols for debug builds
             ndk {
                 debugSymbolLevel = "FULL"
             }
+            // Enable Ads for debug builds so test ads show locally
+            buildConfigField("boolean", "ENABLE_ADS", "true")
         }
     }
     compileOptions {
@@ -103,6 +107,13 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.constraintlayout)
     implementation(libs.material)
+
+    // Google Play Billing
+    implementation(libs.billing)
+
+    // AdMob / Google Mobile Ads
+    implementation(libs.play.services.ads)
+
 
 
 }

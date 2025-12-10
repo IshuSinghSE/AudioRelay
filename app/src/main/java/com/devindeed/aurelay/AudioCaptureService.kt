@@ -225,10 +225,10 @@ class AudioCaptureService : Service() {
                     
                     audioTrack = AudioTrack.Builder()
                         .setAudioAttributes(
+                            // FLAG_LOW_LATENCY is deprecated; prefer setting performance mode on AudioTrack
                             AudioAttributes.Builder()
                                 .setUsage(AudioAttributes.USAGE_MEDIA)
                                 .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                                .setFlags(AudioAttributes.FLAG_LOW_LATENCY)
                                 .build()
                         )
                         .setAudioFormat(
