@@ -33,7 +33,8 @@ class IapAdsActivity : AppCompatActivity() {
             }
         }
 
-        findViewById(android.R.id.content).rootView.findViewById<android.widget.Button>(R.id.btn_purchase_remove_ads)?.setOnClickListener {
+        val btn = findViewById<android.widget.Button>(R.id.btn_purchase_remove_ads)
+        btn?.setOnClickListener {
             // For now, use the mock buy flow to toggle premium locally
             PurchaseManager.buyPremium()
         }

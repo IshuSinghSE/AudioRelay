@@ -51,12 +51,16 @@ android {
             ndk {
                 debugSymbolLevel = "FULL"
             }
+            // Kill-switch for Ads in production builds (false by default)
+            buildConfigField("boolean", "ENABLE_ADS", "false")
         }
         debug {
             // Also generate symbols for debug builds
             ndk {
                 debugSymbolLevel = "FULL"
             }
+            // Enable Ads for debug builds so test ads show locally
+            buildConfigField("boolean", "ENABLE_ADS", "true")
         }
     }
     compileOptions {

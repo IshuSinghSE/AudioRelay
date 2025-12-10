@@ -33,6 +33,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".ui.IapAdsActivity"
+            android:exported="false"
+            android:label="@string/iap_ads_title" />
         <service
             android:name=".AudioRelayService"
             android:exported="true"
