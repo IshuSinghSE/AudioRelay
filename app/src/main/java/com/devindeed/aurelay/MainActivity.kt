@@ -20,6 +20,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -47,6 +49,7 @@ import androidx.compose.foundation.BorderStroke
 import android.content.SharedPreferences
 import androidx.preference.PreferenceManager
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.BroadcastReceiver
@@ -66,6 +69,9 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.collectAsState
+import com.devindeed.aurelay.iap.PurchaseManager
+import com.devindeed.aurelay.ui.SmartAdBanner
 import android.media.projection.MediaProjectionManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -141,12 +147,18 @@ class MainActivity : ComponentActivity() {
         
         // Make status bar and navigation bar transparent
         WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
+        @Suppress("DEPRECATION")
+        try {
+            window.statusBarColor = android.graphics.Color.TRANSPARENT
+        } catch (_: Throwable) {}
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            @Suppress("DEPRECATION")
+            try {
+                window.navigationBarColor = android.graphics.Color.TRANSPARENT
+            } catch (_: Throwable) {}
         }
         
         // Ensure the notification channel exists
@@ -206,40 +218,75 @@ class MainActivity : ComponentActivity() {
             }
             
             MaterialTheme(colorScheme = colorScheme) {
+                // Sync system bars to match the app's Material color scheme and theme
+                val sysColor = MaterialTheme.colorScheme.surface.toArgb()
+                SideEffect {
+                    try {
+                        @Suppress("DEPRECATION")
+                        try { window.statusBarColor = sysColor } catch (_: Throwable) {}
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            @Suppress("DEPRECATION")
+                            try { window.navigationBarColor = sysColor } catch (_: Throwable) {}
+                        }
+                        val controller = WindowInsetsControllerCompat(window, window.decorView)
+                        // When in light theme we want dark icons; in dark theme we want light icons
+                        controller.isAppearanceLightStatusBars = !isDarkTheme
+                        controller.isAppearanceLightNavigationBars = !isDarkTheme
+                    } catch (e: Exception) {
+                        Log.w("MainActivity", "Failed to set system bar colors: ${e.message}")
+                    }
+                }
                 Surface(
                     modifier = Modifier
                         .fillMaxSize()
                         .windowInsetsPadding(WindowInsets.systemBars),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    AurelayApp(
-                        context = this,
-                        isClientConnected = connectionState,
-                        clientIp = clientIpState,
-                        audioLevels = audioLevels,
-                        pendingConnectionRequest = pendingConnectionRequest,
-                        onConnectionResponse = { approved ->
-                            pendingConnectionRequest?.let { (ip, _) ->
-                                sendConnectionResponse(ip, approved)
-                                if (!approved) {
-                                    Toast.makeText(this, "Connection rejected", Toast.LENGTH_SHORT).show()
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        // Main app content takes all available space so the banner can sit below it
+                        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                            AurelayApp(
+                                context = this@MainActivity,
+                                isClientConnected = connectionState,
+                                clientIp = clientIpState,
+                                audioLevels = audioLevels,
+                                pendingConnectionRequest = pendingConnectionRequest,
+                                onConnectionResponse = { approved ->
+                                    pendingConnectionRequest?.let { (ip, _) ->
+                                        sendConnectionResponse(ip, approved)
+                                        if (!approved) {
+                                            Toast.makeText(this@MainActivity, "Connection rejected", Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                    pendingConnectionRequest = null
+                                },
+                                onClientIpSelected = { ip ->
+                                    val previous = clientIpState
+                                    clientIpState = ip
+                                    if (ip.isNotEmpty()) {
+                                        sendConnectRequest(ip)
+                                    } else {
+                                        // clearing selection -> send disconnect to previous if existed
+                                        if (previous.isNotEmpty()) {
+                                            sendDisconnectRequest(previous)
+                                        }
+                                    }
                                 }
-                            }
-                            pendingConnectionRequest = null
-                        },
-                        onClientIpSelected = { ip ->
-                            val previous = clientIpState
-                            clientIpState = ip
-                            if (ip.isNotEmpty()) {
-                                sendConnectRequest(ip)
-                            } else {
-                                // clearing selection -> send disconnect to previous if existed
-                                if (previous.isNotEmpty()) {
-                                    sendDisconnectRequest(previous)
-                                }
-                            }
+                            )
                         }
-                    )
+
+                        // Observe dev mock premium state and show SmartAdBanner only if globally enabled
+                        val isPremium by PurchaseManager.isPremium.collectAsState(initial = false)
+                        if (com.devindeed.aurelay.BuildConfig.ENABLE_ADS) {
+                            SmartAdBanner(
+                                isPremium = isPremium,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(MaterialTheme.colorScheme.surface)
+                                    .navigationBarsPadding() // keep banner above system nav
+                            )
+                        }
+                    }
                 }
             }
         }
