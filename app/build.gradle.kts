@@ -29,10 +29,10 @@ android {
                 keystoreProperties.load(FileInputStream(keystorePropertiesFile))
             }
 
-            storeFile = file(keystoreProperties["storeFile"] ?: "aurelay-release.jks")
-            storePassword = keystoreProperties["storePassword"]?.toString()
-            keyAlias = keystoreProperties["keyAlias"]?.toString()
-            keyPassword = keystoreProperties["keyPassword"]?.toString()
+            storeFile = file(keystoreProperties["storeFile"])
+            storePassword = keystoreProperties["storePassword"].toString()
+            keyAlias = keystoreProperties["keyAlias"].toString()
+            keyPassword = keystoreProperties["keyPassword"].toString()
         }
     }
 
@@ -105,10 +105,10 @@ dependencies {
     implementation(libs.material)
 
     // Google Play Billing
-    implementation("com.android.billingclient:billing:6.0.0")
+    implementation(libs.billing)
 
     // AdMob / Google Mobile Ads
-    implementation("com.google.android.gms:play-services-ads:22.4.0")
+    implementation(libs.play.services.ads)
 
 
 
