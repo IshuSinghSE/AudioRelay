@@ -27,12 +27,12 @@ android {
             val keystoreProperties = Properties()
             if (keystorePropertiesFile.exists()) {
                 keystoreProperties.load(FileInputStream(keystorePropertiesFile))
-            }
 
-            storeFile = file(keystoreProperties["storeFile"])
-            storePassword = keystoreProperties["storePassword"].toString()
-            keyAlias = keystoreProperties["keyAlias"].toString()
-            keyPassword = keystoreProperties["keyPassword"].toString()
+                keystoreProperties["storeFile"]?.let { storeFile = file(it.toString()) }
+                keystoreProperties["storePassword"]?.let { storePassword = it.toString() }
+                keystoreProperties["keyAlias"]?.let { keyAlias = it.toString() }
+                keystoreProperties["keyPassword"]?.let { keyPassword = it.toString() }
+            }
         }
     }
 
