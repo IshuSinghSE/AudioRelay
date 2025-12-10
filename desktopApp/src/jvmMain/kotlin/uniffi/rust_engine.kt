@@ -5,6 +5,7 @@ import com.sun.jna.Native
 import com.sun.jna.Pointer
 import com.sun.jna.Library
 import java.io.File
+import kotlin.concurrent.thread
 
 // Minimal JNA-backed bindings to the Rust native library.
 // These are used as a pragmatic alternative to UniFFI-generated bindings
@@ -13,6 +14,11 @@ import java.io.File
 private interface NativeLib : Library {
     fun discover_receivers_c(timeout_secs: Long, out_ptr: Pointer?, out_len: Long): Int
     fun request_connect_and_wait_c(host: String?, timeout_secs: Long, device_name: String?, out_ptr: Pointer?, out_len: Long): Int
+    fun start_stream_c(host: String?): Int
+    fun stop_stream_c(): Int
+    fun start_stream_with_device_c(host: String?, device: String?): Int
+    fun start_ffmpeg_stream_c(host: String?, port: Int, device: String?): Int
+    fun stop_ffmpeg_stream_c(): Int
 }
 
 private object RustNative {
@@ -34,14 +40,72 @@ private object RustNative {
     }
 }
 
-fun startStream(targetIp: String) {
-    // The existing start/stop stream functionality is provided by separate UniFFI stubs,
-    // so maintain the previous behavior here: print a message.
-    println("[rust_native] startStream called with target=$targetIp")
+fun startStream(targetIp: String, deviceName: String? = null) {
+    val lib = RustNative.INSTANCE ?: run {
+        println("Native library not available; cannot start stream")
+        return
+    }
+    thread(start = true) {
+        try {
+            val rc = if (deviceName == null || deviceName.isBlank()) lib.start_stream_c(targetIp) else lib.start_stream_with_device_c(targetIp, deviceName)
+            if (rc != 0) {
+                System.err.println("start_stream_c returned $rc")
+            }
+        } catch (e: Throwable) {
+            System.err.println("startStream error: ${e.message}")
+        }
+    }
 }
 
 fun stopStream() {
-    println("[rust_native] stopStream called")
+    val lib = RustNative.INSTANCE ?: run {
+        println("Native library not available; cannot stop stream")
+        return
+    }
+    thread(start = true) {
+        try {
+            val rc = lib.stop_stream_c()
+            if (rc != 0) {
+                System.err.println("stop_stream_c returned $rc")
+            }
+        } catch (e: Throwable) {
+            System.err.println("stopStream error: ${e.message}")
+        }
+    }
+}
+
+fun startStreamFFmpeg(targetIp: String, port: Int = 5000, deviceName: String? = null) {
+    val lib = RustNative.INSTANCE ?: run {
+        println("Native library not available; cannot start ffmpeg stream")
+        return
+    }
+    thread(start = true) {
+        try {
+            val rc = lib.start_ffmpeg_stream_c(targetIp, port, deviceName)
+            if (rc != 0) {
+                System.err.println("start_ffmpeg_stream_c returned $rc")
+            }
+        } catch (e: Throwable) {
+            System.err.println("startStreamFFmpeg error: ${e.message}")
+        }
+    }
+}
+
+fun stopStreamFFmpeg() {
+    val lib = RustNative.INSTANCE ?: run {
+        println("Native library not available; cannot stop ffmpeg stream")
+        return
+    }
+    thread(start = true) {
+        try {
+            val rc = lib.stop_ffmpeg_stream_c()
+            if (rc != 0) {
+                System.err.println("stop_ffmpeg_stream_c returned $rc")
+            }
+        } catch (e: Throwable) {
+            System.err.println("stopStreamFFmpeg error: ${e.message}")
+        }
+    }
 }
 
 /**

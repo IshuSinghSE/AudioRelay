@@ -15,7 +15,12 @@ import uniffi.rust_engine.startStream
 import uniffi.rust_engine.stopStream
 import uniffi.rust_engine.discoverReceivers
 import uniffi.rust_engine.requestConnectAndWait
+import uniffi.rust_engine.startStreamFFmpeg
+import uniffi.rust_engine.stopStreamFFmpeg
 import androidx.compose.material3.AlertDialog
+import java.io.BufferedReader
+import java.io.InputStreamReader
+import java.util.concurrent.TimeUnit
 
 @Composable
 @Preview
@@ -26,6 +31,31 @@ fun App() {
     var discovering by remember { mutableStateOf(false) }
     var showDiscoveryDialog by remember { mutableStateOf(false) }
     var discoveredDevices by remember { mutableStateOf(listOf<String>()) }
+    var deviceName by remember { mutableStateOf("") }
+    var availableDevices by remember { mutableStateOf(listOf<String>()) }
+    var showDeviceDialog by remember { mutableStateOf(false) }
+    var backend by remember { mutableStateOf("Native") }
+    var ffmpegProcess by remember { mutableStateOf<Process?>(null) }
+
+    // Start FFmpeg fallback via Rust (spawns `ffmpeg` from native code and pipes to TCP)
+    fun startFFmpegStream(host: String, port: String, device: String?) {
+        try {
+            val p = port.toIntOrNull() ?: 5000
+            startStreamFFmpeg(host, p, if (device.isNullOrBlank()) null else device)
+            statusMessage = "Requested ffmpeg stream to $host:$p"
+        } catch (e: Exception) {
+            statusMessage = "FFmpeg start failed: ${e.message}"
+        }
+    }
+
+    fun stopFFmpegStream() {
+        try {
+            stopStreamFFmpeg()
+            statusMessage = "Requested ffmpeg stop"
+        } catch (e: Exception) {
+            statusMessage = "FFmpeg stop failed: ${e.message}"
+        }
+    }
 
     MaterialTheme(
         colorScheme = darkColorScheme(
@@ -50,10 +80,97 @@ fun App() {
                 OutlinedTextField(
                     value = targetIp,
                     onValueChange = { targetIp = it },
-                    label = { Text("Target IP Address") },
+                    label = { Text("Target IP Address (ip:port)") },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp),
                     enabled = !isStreaming
                 )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Backend selection: Native (Rust) or FFmpeg (Python fallback)
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp)) {
+                    Text("Backend:", modifier = Modifier.padding(end = 8.dp))
+                    Button(onClick = { backend = "Native" }, enabled = backend != "Native" && !isStreaming) { Text("Native") }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(onClick = { backend = "FFmpeg" }, enabled = backend != "FFmpeg" && !isStreaming) { Text("FFmpeg") }
+                    Spacer(modifier = Modifier.width(16.dp))
+                    Text("Selected: $backend")
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp)) {
+                    OutlinedTextField(
+                        value = deviceName,
+                        onValueChange = { deviceName = it },
+                        label = { Text("Audio device name (optional)") },
+                        modifier = Modifier.weight(1f),
+                        enabled = !isStreaming
+                    )
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    Button(onClick = {
+                        // Refresh device list using `pactl list short sources` in background
+                        thread(start = true) {
+                            try {
+                                val pb = ProcessBuilder("pactl", "list", "short", "sources")
+                                    .redirectErrorStream(true)
+                                    .start()
+                                val out = BufferedReader(InputStreamReader(pb.inputStream))
+                                val list = mutableListOf<String>()
+                                var line: String? = out.readLine()
+                                while (line != null) {
+                                    val parts = line.trim().split(Regex("\t+| +"))
+                                    if (parts.size >= 2) {
+                                        list.add(parts[1])
+                                    }
+                                    line = out.readLine()
+                                }
+                                out.close()
+                                availableDevices = list
+                                showDeviceDialog = true
+                            } catch (e: Exception) {
+                                statusMessage = "Failed to list devices: ${'$'}{e.message}"
+                            }
+                        }
+                    }, enabled = !isStreaming) {
+                        Text("Refresh")
+                    }
+                }
+
+                // Device selection dialog
+                if (showDeviceDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showDeviceDialog = false },
+                        title = { Text("Available Audio Sources") },
+                        text = {
+                            Column {
+                                if (availableDevices.isEmpty()) {
+                                    Text("No devices found. Make sure PulseAudio/PipeWire is running.")
+                                } else {
+                                    availableDevices.forEach { dev ->
+                                        Row(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                            Text(text = dev, modifier = Modifier.weight(1f))
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Button(onClick = {
+                                                deviceName = dev
+                                                showDeviceDialog = false
+                                            }) {
+                                                Text("Select")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        },
+                        confirmButton = {
+                            TextButton(onClick = { showDeviceDialog = false }) {
+                                Text("Close")
+                            }
+                        }
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(12.dp))
 
@@ -89,9 +206,13 @@ fun App() {
                         onClick = {
                             if (isStreaming) {
                                 try {
-                                    stopStream()
-                                    isStreaming = false
-                                    statusMessage = "Stopped"
+                                    if (backend == "FFmpeg") {
+                                        stopFFmpegStream()
+                                    } else {
+                                        stopStream()
+                                        isStreaming = false
+                                        statusMessage = "Stopped"
+                                    }
                                 } catch (e: Exception) {
                                     statusMessage = "Error stopping: ${'$'}{e.message}"
                                 }
@@ -100,9 +221,18 @@ fun App() {
                                     statusMessage = "Please enter a valid IP"
                                 } else {
                                     try {
-                                        startStream(targetIp)
-                                        isStreaming = true
-                                        statusMessage = "Streaming to ${'$'}targetIp..."
+                                        val parts = targetIp.split(":")
+                                        val host = parts.getOrNull(0) ?: ""
+                                        val port = parts.getOrNull(1) ?: "5000"
+                                        if (backend == "FFmpeg") {
+                                            startFFmpegStream(host, port, if (deviceName.isBlank()) null else deviceName)
+                                            isStreaming = true
+                                            statusMessage = "FFmpeg streaming to $host:$port..."
+                                        } else {
+                                            startStream(targetIp, deviceName)
+                                            isStreaming = true
+                                            statusMessage = "Streaming to ${'$'}targetIp..."
+                                        }
                                     } catch (e: Exception) {
                                         statusMessage = "Error starting: ${'$'}{e.message}"
                                         e.printStackTrace()
