@@ -104,5 +104,12 @@ dependencies {
     implementation(libs.androidx.constraintlayout)
     implementation(libs.material)
 
+    // Google Play Billing
+    implementation("com.android.billingclient:billing:6.0.0")
+
+    // AdMob / Google Mobile Ads
+    implementation("com.google.android.gms:play-services-ads:22.4.0")
+
+
 
 }
