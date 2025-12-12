@@ -1,10 +1,10 @@
-package com.aurelay.engine.ffi
+package com.devindeed.aurelay.engine.ffi
 
-import com.aurelay.engine.DesktopAudioEngine
-import com.aurelay.engine.AudioDevice
-import com.aurelay.engine.Receiver
-import com.aurelay.engine.TransportMode
-import com.aurelay.engine.StreamState
+import com.devindeed.aurelay.engine.DesktopAudioEngine
+import com.devindeed.aurelay.engine.AudioDevice
+import com.devindeed.aurelay.engine.Receiver
+import com.devindeed.aurelay.engine.TransportMode
+import com.devindeed.aurelay.engine.StreamState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import uniffi.rust_engine.*

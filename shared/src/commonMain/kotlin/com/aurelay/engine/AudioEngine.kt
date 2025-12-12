@@ -1,4 +1,4 @@
-package com.aurelay.engine
+package com.devindeed.aurelay.engine
 
 import kotlinx.coroutines.flow.StateFlow
 

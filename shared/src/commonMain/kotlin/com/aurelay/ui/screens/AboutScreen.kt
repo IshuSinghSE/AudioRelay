@@ -1,4 +1,4 @@
-package com.aurelay.ui.screens
+package com.devindeed.aurelay.ui.screens
 
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -12,7 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.aurelay.Constants
+import com.devindeed.aurelay.Constants
 
 @Composable
 fun AboutScreen(modifier: Modifier = Modifier) {

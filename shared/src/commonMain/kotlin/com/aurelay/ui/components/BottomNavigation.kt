@@ -1,4 +1,4 @@
-package com.aurelay.ui.components
+package com.devindeed.aurelay.ui.components
 
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.padding
@@ -17,7 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import com.aurelay.ui.Screen
+import com.devindeed.aurelay.ui.navigation.Screen
 
 /**
  * Bottom navigation bar for mobile layout.

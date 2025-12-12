@@ -1,2 +1,2 @@
-package com.aurelay.ui
+package com.devindeed.aurelay.ui
 

@@ -1,4 +1,4 @@
-package com.aurelay.ui
+package com.devindeed.aurelay.ui
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape

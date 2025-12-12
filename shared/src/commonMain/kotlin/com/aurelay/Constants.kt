@@ -1,4 +1,4 @@
-package com.aurelay
+package com.devindeed.aurelay
 
 /**
  * Application-wide constants and configuration values.

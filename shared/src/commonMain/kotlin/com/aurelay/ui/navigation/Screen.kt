@@ -1,4 +1,4 @@
-package com.aurelay.ui.navigation
+package com.devindeed.aurelay.ui.navigation
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*

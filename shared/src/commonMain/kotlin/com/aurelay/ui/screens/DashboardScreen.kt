@@ -1,250 +1,346 @@
-package com.aurelay.ui.screens
+package com.devindeed.aurelay.ui.screens
 
+import androidx.compose.animation.animateColor
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LinkOff
+import androidx.compose.material.icons.filled.PowerSettingsNew
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.aurelay.engine.AudioEngine
-import com.aurelay.engine.Receiver
-import com.aurelay.engine.StreamState
-import com.aurelay.ui.components.*
-import kotlinx.coroutines.launch
+import com.devindeed.aurelay.engine.AudioEngine
 
-/**
- * Dashboard screen - the main screen showing the power button and receiver list.
- * Matches the design mockup with the large circular power button centered.
- */
+// Enums for UI state
+enum class AppMode {
+    Receiver, Sender
+}
+
+enum class HeroState {
+    Idle,           // Sender: Ready to start
+    Broadcasting,   // Sender: Streaming
+    Disconnected,   // Receiver: Waiting
+    Connected       // Receiver: Listening (Optional)
+}
+
 @Composable
 fun DashboardScreen(
     audioEngine: AudioEngine,
     modifier: Modifier = Modifier
 ) {
-    val scope = rememberCoroutineScope()
-    val streamState by audioEngine.streamState.collectAsState()
-    val discoveredReceivers by audioEngine.discoveredReceivers.collectAsState()
-    val selectedDevice by audioEngine.selectedDevice.collectAsState()
+    // State
+    var appMode by remember { mutableStateOf(AppMode.Sender) }
+    // For now, we simulate HeroState based on AppMode and a local toggle.
+    // In a real app, this would come from audioEngine.streamState
+    var isBroadcasting by remember { mutableStateOf(false) }
     
-    var selectedReceiver by remember { mutableStateOf<Receiver?>(null) }
-    val isStreaming = streamState == StreamState.Streaming
+    val heroState = when (appMode) {
+        AppMode.Sender -> if (isBroadcasting) HeroState.Broadcasting else HeroState.Idle
+        AppMode.Receiver -> HeroState.Disconnected // Placeholder for Receiver state
+    }
 
-    // Update selected receiver when list changes
-    LaunchedEffect(discoveredReceivers) {
-        if (selectedReceiver == null && discoveredReceivers.isNotEmpty()) {
-            selectedReceiver = discoveredReceivers.first()
-        }
-    }
-    
-    // Start discovery on launch
-    LaunchedEffect(Unit) {
-        audioEngine.startDiscovery()
-        audioEngine.refreshDevices()
-    }
-    
-    BoxWithConstraints(modifier = modifier.fillMaxSize()) {
-        val isWideScreen = maxWidth > 600.dp
+    BoxWithConstraints(modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+        val isWide = maxWidth >= 900.dp
         
-        if (isWideScreen) {
-            // Desktop/Tablet layout: Two columns
-            Row(modifier = Modifier.fillMaxSize()) {
-                // Left: Power button and status
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    PowerSection(
-                        isStreaming = isStreaming,
-                        selectedReceiver = selectedReceiver,
-                        onPowerClick = {
-                            scope.launch {
-                                if (isStreaming) {
-                                    audioEngine.stopStreaming()
-                                } else {
-                                    selectedReceiver?.let { receiver ->
-                                        audioEngine.startStreaming(
-                                            receiver = receiver,
-                                            device = selectedDevice
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    )
+        if (isWide) {
+            DesktopLayout(
+                appMode = appMode,
+                heroState = heroState,
+                onModeChanged = { appMode = it },
+                onHeroClick = { 
+                    if (appMode == AppMode.Sender) isBroadcasting = !isBroadcasting 
                 }
-                
-                VerticalDivider()
-                
-                // Right: Device list and visualizer
-                Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight()
-                        .padding(24.dp)
-                ) {
-                    ReceiverListSection(
-                        receivers = discoveredReceivers,
-                        selectedReceiver = selectedReceiver,
-                        onReceiverSelected = { selectedReceiver = it },
-                        isStreaming = isStreaming
-                    )
-                }
-            }
-        } else {
-            // Mobile layout: Single column
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Power button at top (when not streaming)
-                if (!isStreaming) {
-                    PowerSection(
-                        isStreaming = false,
-                        selectedReceiver = selectedReceiver,
-                        onPowerClick = {
-                            scope.launch {
-                                selectedReceiver?.let { receiver ->
-                                    audioEngine.startStreaming(
-                                        receiver = receiver,
-                                        device = selectedDevice
-                                    )
-                                }
-                            }
-                        }
-                    )
-                    
-                    Spacer(Modifier.height(24.dp))
-                }
-                
-                // Receivers list
-                ReceiverListSection(
-                    receivers = discoveredReceivers,
-                    selectedReceiver = selectedReceiver,
-                    onReceiverSelected = { selectedReceiver = it },
-                    isStreaming = isStreaming,
-                    modifier = Modifier.weight(1f)
-                )
-                
-                // Show stop button when streaming (mobile)
-                if (isStreaming) {
-                    Spacer(Modifier.height(16.dp))
-                    PowerButton(
-                        isStreaming = true,
-                        onClick = {
-                            scope.launch {
-                                audioEngine.stopStreaming()
-                            }
-                        },
-                        modifier = Modifier.size(160.dp)
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun PowerSection(
-    isStreaming: Boolean,
-    selectedReceiver: Receiver?,
-    onPowerClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(24.dp)
-    ) {
-        // Status text
-        Text(
-            text = if (isStreaming) "Broadcasting Audio" else "Ready to Stream",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold
-        )
-        
-        // Large power button
-        PowerButton(
-            isStreaming = isStreaming,
-            enabled = selectedReceiver != null || isStreaming,
-            onClick = onPowerClick,
-            modifier = Modifier.size(200.dp)
-        )
-        
-        // Connection info
-        if (selectedReceiver != null) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier.padding(16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        if (isStreaming) "Streaming To" else "Selected Receiver",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        selectedReceiver.name,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Text(
-                        selectedReceiver.address,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ReceiverListSection(
-    receivers: List<Receiver>,
-    selectedReceiver: Receiver?,
-    onReceiverSelected: (Receiver) -> Unit,
-    isStreaming: Boolean,
-    modifier: Modifier = Modifier
-) {
-    Column(
-        modifier = modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Text(
-            if (receivers.isEmpty()) "Searching for Devices..." else "Nearby Devices",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-        
-        if (isStreaming) {
-            // Show visualizer when streaming
-            Visualizer(
-                isStreaming = true,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(200.dp)
             )
-            Spacer(Modifier.height(16.dp))
+        } else {
+            MobileLayout(
+                appMode = appMode,
+                heroState = heroState,
+                onModeChanged = { appMode = it },
+                onHeroClick = { 
+                    if (appMode == AppMode.Sender) isBroadcasting = !isBroadcasting 
+                }
+            )
         }
+    }
+}
+
+@Composable
+fun MobileLayout(
+    appMode: AppMode,
+    heroState: HeroState,
+    onModeChanged: (AppMode) -> Unit,
+    onHeroClick: () -> Unit
+) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        // Top: Segmented Control
+        SegmentedModeToggle(
+            selectedMode = appMode,
+            onModeChanged = onModeChanged
+        )
+
+        // Center: Hero
+        Box(
+            modifier = Modifier.weight(1f),
+            contentAlignment = Alignment.Center
+        ) {
+            HeroControl(
+                state = heroState,
+                onClick = onHeroClick
+            )
+        }
+
+        // Bottom: Status Text
+        StatusText(heroState)
         
-        // Receiver list
-        DeviceList(
-            receivers = receivers,
-            selectedReceiver = selectedReceiver,
-            onReceiverSelected = onReceiverSelected,
-            modifier = Modifier.fillMaxWidth()
+        Spacer(modifier = Modifier.height(32.dp)) // Bottom padding
+    }
+}
+
+@Composable
+fun DesktopLayout(
+    appMode: AppMode,
+    heroState: HeroState,
+    onModeChanged: (AppMode) -> Unit,
+    onHeroClick: () -> Unit
+) {
+    Row(modifier = Modifier.fillMaxSize()) {
+        // Left Pane
+        Column(
+            modifier = Modifier
+                .weight(0.4f)
+                .fillMaxHeight()
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            SegmentedModeToggle(
+                selectedMode = appMode,
+                onModeChanged = onModeChanged
+            )
+            
+            Spacer(modifier = Modifier.height(48.dp))
+            
+            HeroControl(
+                state = heroState,
+                onClick = onHeroClick
+            )
+            
+            Spacer(modifier = Modifier.height(32.dp))
+            
+            StatusText(heroState)
+        }
+
+        // Right Pane (Placeholder)
+        Box(
+            modifier = Modifier
+                .weight(0.6f)
+                .fillMaxHeight()
+                .padding(32.dp)
+                .background(
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                    RoundedCornerShape(24.dp)
+                ),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                "Details & Settings Placeholder",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+fun SegmentedModeToggle(
+    selectedMode: AppMode,
+    onModeChanged: (AppMode) -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        modifier = Modifier.height(48.dp).width(240.dp) // Fixed width for better look
+    ) {
+        Row(modifier = Modifier.padding(4.dp)) {
+            AppMode.values().forEach { mode ->
+                val isSelected = mode == selectedMode
+                val transition = updateTransition(isSelected, label = "Selection")
+                val bgColor by transition.animateColor(label = "BgColor") { selected ->
+                    if (selected) MaterialTheme.colorScheme.primary else Color.Transparent
+                }
+                val contentColor by transition.animateColor(label = "ContentColor") { selected ->
+                    if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .background(bgColor, RoundedCornerShape(50))
+                        .clickable { onModeChanged(mode) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = mode.name,
+                        style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Medium),
+                        color = contentColor
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun HeroControl(
+    state: HeroState,
+    onClick: () -> Unit
+) {
+    val isBroadcasting = state == HeroState.Broadcasting
+    
+    // Pulse Animation for Broadcasting
+    val infiniteTransition = rememberInfiniteTransition(label = "Pulse")
+    val pulseScale by if (isBroadcasting) {
+        infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = 1.1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1000, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "PulseScale"
+        )
+    } else {
+        remember { mutableStateOf(1f) }
+    }
+
+    val glowAlpha by if (isBroadcasting) {
+        infiniteTransition.animateFloat(
+            initialValue = 0.5f,
+            targetValue = 0.2f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(1000, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "GlowAlpha"
+        )
+    } else {
+        remember { mutableStateOf(0f) }
+    }
+
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier.size(240.dp)
+    ) {
+        // Glow Effect
+        if (isBroadcasting) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                drawCircle(
+                    color = Color.Red.copy(alpha = glowAlpha),
+                    radius = size.minDimension / 2 * pulseScale
+                )
+            }
+        }
+
+        // Main Button
+        Surface(
+            onClick = onClick,
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surface,
+            border = when (state) {
+                HeroState.Broadcasting -> BorderStroke(4.dp, MaterialTheme.colorScheme.error)
+                HeroState.Idle -> BorderStroke(2.dp, MaterialTheme.colorScheme.outline)
+                HeroState.Disconnected -> BorderStroke(2.dp, MaterialTheme.colorScheme.outlineVariant)
+                else -> null
+            },
+            modifier = Modifier
+                .size(200.dp)
+                .let {
+                    if (isBroadcasting) {
+                        it.shadow(
+                            elevation = 20.dp,
+                            shape = CircleShape,
+                            ambientColor = MaterialTheme.colorScheme.error,
+                            spotColor = MaterialTheme.colorScheme.error
+                        )
+                    } else it
+                }
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    imageVector = when (state) {
+                        HeroState.Broadcasting -> Icons.Default.Stop
+                        HeroState.Idle -> Icons.Default.PowerSettingsNew
+                        HeroState.Disconnected -> Icons.Default.LinkOff
+                        else -> Icons.Default.PowerSettingsNew
+                    },
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    tint = when (state) {
+                        HeroState.Broadcasting -> MaterialTheme.colorScheme.error
+                        HeroState.Idle -> MaterialTheme.colorScheme.primary
+                        HeroState.Disconnected -> MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> MaterialTheme.colorScheme.onSurface
+                    }
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = when (state) {
+                        HeroState.Broadcasting -> "STOP"
+                        HeroState.Idle -> "Power"
+                        HeroState.Disconnected -> "Disconnected"
+                        else -> ""
+                    },
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun StatusText(state: HeroState) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = when (state) {
+                HeroState.Broadcasting -> "Broadcasting Audio"
+                HeroState.Idle -> "Ready to Broadcast"
+                HeroState.Disconnected -> "Waiting for Connection"
+                else -> ""
+            },
+            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = when (state) {
+                HeroState.Broadcasting -> "Listening on port 5000"
+                HeroState.Idle -> "Tap to start stream"
+                HeroState.Disconnected -> "Connect from a sender"
+                else -> ""
+            },
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

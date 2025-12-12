@@ -1,10 +1,8 @@
-package com.aurelay.ui
+package com.devindeed.aurelay.ui
 
 /**
- * Navigation destinations in the app.
+ * Forwarding alias to the navigation `Screen` sealed class.
+ * This keeps existing imports of `com.devindeed.aurelay.ui.Screen` working
+ * while the canonical definition lives in `ui.navigation.Screen`.
  */
-enum class Screen {
-    Dashboard,
-    Audio,
-    Settings
-}
+typealias Screen = com.devindeed.aurelay.ui.navigation.Screen

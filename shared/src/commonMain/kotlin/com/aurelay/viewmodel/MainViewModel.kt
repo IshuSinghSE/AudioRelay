@@ -1,7 +1,7 @@
-package com.aurelay.viewmodel
+package com.devindeed.aurelay.viewmodel
 
-import com.aurelay.engine.AudioEngine
-import com.aurelay.engine.Receiver
+import com.devindeed.aurelay.engine.AudioEngine
+import com.devindeed.aurelay.engine.Receiver
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 

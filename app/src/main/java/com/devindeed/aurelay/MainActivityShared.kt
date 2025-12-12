@@ -16,8 +16,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.preference.PreferenceManager
-import com.aurelay.App
-import com.aurelay.engine.AndroidAudioEngine
+import com.devindeed.aurelay.App
+import com.devindeed.aurelay.engine.AndroidAudioEngine
 import com.devindeed.aurelay.iap.PurchaseManager
 import com.devindeed.aurelay.ui.SmartAdBanner
 

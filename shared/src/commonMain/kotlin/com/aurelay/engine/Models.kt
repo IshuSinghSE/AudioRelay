@@ -1,4 +1,4 @@
-package com.aurelay.engine
+package com.devindeed.aurelay.engine
 
 /**
  * Shared data models for the audio engine.

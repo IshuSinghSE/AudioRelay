@@ -1,4 +1,4 @@
-package com.aurelay.ui.components
+package com.devindeed.aurelay.ui.components
 
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas

@@ -55,7 +55,7 @@ kotlin {
 }
 
 android {
-    namespace = "com.aurelay.shared"
+    namespace = "com.devindeed.aurelay.shared"
     compileSdk = 36
     
     defaultConfig {

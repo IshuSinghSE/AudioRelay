@@ -1,4 +1,4 @@
-package com.aurelay.engine
+package com.devindeed.aurelay.engine
 
 import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
